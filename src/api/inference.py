@@ -98,7 +98,9 @@ def _prepare(requests: list[HousePredictionRequest]) -> pd.DataFrame:
             "pick a point on land inside the county."
         )
     input_data['bed_bath_ratio'] = input_data['bedrooms'] / input_data['bathrooms']
-    return preprocessor.transform(input_data)
+    # El modelo se entrenó desde el CSV de features, con columnas "0".."n":
+    # se le pasan con esos nombres para que scikit-learn no avise en cada petición.
+    return pd.DataFrame(preprocessor.transform(input_data), columns=model.feature_names_in_)
 
 def predict_price(request: HousePredictionRequest) -> PredictionResponse:
     """

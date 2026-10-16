@@ -1,8 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from inference import predict_price, batch_predict, model_info, InvalidInputError
+from inference import predict_price, batch_predict, model_info, metadata, InvalidInputError
+import metrics
 from schemas import HousePredictionRequest, PredictionResponse
-from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_fastapi_instrumentator import Instrumentator, metrics as http_metrics
 
 # Initialize FastAPI app with metadata
 app = FastAPI(
@@ -34,7 +35,13 @@ app.add_middleware(
 )
 
 # Initialize and instrument prometheus metrics
-Instrumentator().instrument(app).expose(app)
+# Buckets de latencia por endpoint afinados a una API que responde en decenas de
+# ms (los de serie empiezan en 0,1 s y no permiten calcular un p95 útil).
+instrumentator = Instrumentator().add(http_metrics.default(
+    latency_lowr_buckets=(0.005, 0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.25, 0.5, 1),
+))
+instrumentator.instrument(app).expose(app)
+metrics.publish_model_metadata(metadata)
 
 # Health check endpoint
 @app.get("/health", response_model=dict)
@@ -45,17 +52,23 @@ async def health_check():
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(request: HousePredictionRequest):
     try:
-        return predict_price(request)
+        response = predict_price(request)
     except InvalidInputError as e:
+        metrics.record_rejection("predict", e.code)
         raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)})
+    metrics.record("predict", [response.predicted_price])
+    return response
 
 # Batch prediction endpoint
 @app.post("/batch-predict", response_model=list)
 async def batch_predict_endpoint(requests: list[HousePredictionRequest]):
     try:
-        return batch_predict(requests)
+        prices = batch_predict(requests)
     except InvalidInputError as e:
+        metrics.record_rejection("batch", e.code)
         raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)})
+    metrics.record("batch", prices)
+    return prices
 
 # Served model metadata: metrics, interval and valid input values
 @app.get("/model-info", response_model=dict)
