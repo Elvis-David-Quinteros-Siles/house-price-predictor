@@ -48,7 +48,9 @@ def create_preprocessor():
     
     # Define feature groups
     categorical_features = ['location', 'condition']
-    numerical_features = ['sqft', 'bedrooms', 'bathrooms', 'house_age', 'price_per_sqft', 'bed_bath_ratio']
+    # price_per_sqft se deriva del precio (target): usarlo como feature filtra
+    # la respuesta al modelo y en inferencia no existe, así que se excluye.
+    numerical_features = ['sqft', 'bedrooms', 'bathrooms', 'house_age', 'bed_bath_ratio']
     
     # Preprocessing for numerical features
     numerical_transformer = Pipeline(steps=[

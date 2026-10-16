@@ -47,11 +47,15 @@ with col1:
 
     # Location dropdown
     st.markdown("<p><strong>Location</strong></p>", unsafe_allow_html=True)
-    location = st.selectbox("", options=["Urban", "Suburban", "Rural", "Urban", "Waterfront", "Mountain"], index=1, label_visibility="collapsed")
+    location = st.selectbox("", options=["Downtown", "Urban", "Suburb", "Rural", "Waterfront", "Mountain"], index=2, label_visibility="collapsed")
+
+    # Condition dropdown
+    st.markdown("<p><strong>Condition</strong></p>", unsafe_allow_html=True)
+    condition = st.selectbox("", options=["Poor", "Fair", "Good", "Excellent"], index=2, label_visibility="collapsed")
 
     # Year Built slider
     st.markdown(f"<p><strong>Year Built:</strong> <span id='year-value'></span></p>", unsafe_allow_html=True)
-    year_built = st.slider("", 1900, 2025, 2000, 1, label_visibility="collapsed", key="year")
+    year_built = st.slider("", 1900, 2026, 2000, 1, label_visibility="collapsed", key="year")
     st.markdown(f"<script>document.getElementById('year-value').innerText = '{year_built}';</script>", unsafe_allow_html=True)
 
     # Predict button
@@ -73,9 +77,9 @@ with col2:
                 "sqft": sqft,
                 "bedrooms": bedrooms,
                 "bathrooms": bathrooms,
-                "location": location.lower(),
+                "location": location,
                 "year_built": year_built,
-                "condition": "Good"
+                "condition": condition
             }
 
             try:
@@ -128,7 +132,7 @@ with col2:
         with col_b:
             st.markdown('<div class="info-card">', unsafe_allow_html=True)
             st.markdown('<p class="info-label">Model Used</p>', unsafe_allow_html=True)
-            st.markdown('<p class="info-value">XGBoost</p>', unsafe_allow_html=True)
+            st.markdown('<p class="info-value">Gradient Boosting</p>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         # Display price range and prediction time
