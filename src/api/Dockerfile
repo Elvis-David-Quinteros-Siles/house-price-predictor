@@ -33,7 +33,7 @@ ENV PYTHONPATH=/app PYTHONUNBUFFERED=1
 COPY src/api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY --from=train /work/models/trained/house_price_model.pkl /work/models/trained/preprocessor.pkl /work/models/trained/model_metadata.json /app/models/trained/
+COPY --from=train /work/models/trained/house_price_model.pkl /work/models/trained/preprocessor.pkl /work/models/trained/model_metadata.json /work/models/trained/sold_locations.npy /app/models/trained/
 COPY src/api/ /app/
 
 RUN useradd --create-home --uid 1000 app

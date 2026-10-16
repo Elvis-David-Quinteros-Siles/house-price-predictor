@@ -101,8 +101,8 @@ python -m jupyterlab
 
 - **Data:** [House Sales in King County, USA](https://www.kaggle.com/datasets/harlfoxem/housesalesprediction) (CC0): 21,613 real sales in the Seattle area between May 2014 and May 2015, stored in `data/raw/kc_house_data.csv`. Predicted prices are therefore in 2014–2015 dollars.
 - **Cleaning:** repeated sales of the same house keep only the latest one (so a house cannot be in train and test at once) and 18 rows with impossible bedroom/bathroom counts are dropped, leaving 21,418 sales.
-- **Inputs:** living area, bedrooms, bathrooms, zipcode, year built and condition (King County scale: Poor, Fair, Average, Good, Very Good).
-- **Model selection** (5-fold cross-validation):
+- **Inputs:** location (latitude/longitude, picked on a map), living area, lot size, bedrooms, bathrooms, year built, condition (King County scale: Poor → Very Good), construction grade (1–13, 7 = average), view (0–4) and waterfront.
+- **Model selection** (5-fold cross-validation). First the algorithm, with the original six inputs:
 
 | Model | R² | MAE | MAPE |
 |---|---|---|---|
@@ -113,8 +113,20 @@ python -m jupyterlab
 | Gradient Boosting, 600 trees, depth 5 | 0.78 | $90.3k | 16.6% |
 | **Gradient Boosting, 600 trees, depth 5, log(price)** | **0.80** | **$87.0k** | **15.4%** |
 
-- **Served model:** the last one, trained with a fixed seed (`random_state: 42`), so every build produces the same model. On the 20% hold-out test set it scores R² 0.77, MAE $92.6k and MAPE 15.4%; these numbers are written to `models/trained/model_metadata.json` and exposed by `GET /model-info`.
-- **Price range:** an empirical 90% interval: 90% of the test houses sold between 0.72× and 1.43× the predicted price, and the API applies those ratios to each prediction.
+  Then the features, with that algorithm:
+
+| Features | R² | MAE | MAPE |
+|---|---|---|---|
+| Original six (zipcode as location) | 0.80 | $87.1k | 15.4% |
+| + grade, view, waterfront, lot size (zipcode) | 0.87 | $72.7k | 13.4% |
+| **+ grade, view, waterfront, lot size (latitude/longitude)** | **0.90** | **$64.9k** | **11.9%** |
+| + the same, latitude/longitude and zipcode | 0.90 | $63.5k | 11.7% |
+
+  Coordinates beat the zipcode, and adding the zipcode on top is within the noise (±0.008 R²), so the model uses coordinates only.
+- **Served model:** trained with a fixed seed (`random_state: 42`), so every build produces the same model. On the 20% hold-out test set it scores R² 0.89, MAE $67.0k and MAPE 11.9%; these numbers are written to `models/trained/model_metadata.json` and exposed by `GET /model-info`.
+- **Price range:** an empirical 90% interval: 90% of the test houses sold between 0.77× and 1.30× the predicted price, and the API applies those ratios to each prediction.
+- **Location check:** the API rejects points more than 0.5 km from any sale in the dataset (lakes, Puget Sound, outside the county); 99% of the sales have another one within 0.55 km.
+- **Interface:** Streamlit in Spanish and English (selector at the top, or `?lang=en` in the URL), with an OpenStreetMap map to place the house.
 
 ## 🔁 Model Workflow
 

@@ -1,7 +1,9 @@
 import json
 import time
 import joblib
+import numpy as np
 import pandas as pd
+from sklearn.neighbors import BallTree
 from datetime import datetime
 from schemas import HousePredictionRequest, PredictionResponse
 
@@ -9,16 +11,38 @@ from schemas import HousePredictionRequest, PredictionResponse
 MODEL_PATH = "models/trained/house_price_model.pkl"
 PREPROCESSOR_PATH = "models/trained/preprocessor.pkl"
 METADATA_PATH = "models/trained/model_metadata.json"
+LOCATIONS_PATH = "models/trained/sold_locations.npy"
+
+# Distancia máxima a la venta más cercana para aceptar una ubicación.
+# El 99 % de las ventas tiene otra a menos de 0,55 km; con 1 km se aceptaban
+# puntos dentro del lago Washington cerca de la orilla.
+MAX_DISTANCE_KM = 0.5
+EARTH_RADIUS_KM = 6371.0
 
 try:
     model = joblib.load(MODEL_PATH)
     preprocessor = joblib.load(PREPROCESSOR_PATH)
     with open(METADATA_PATH) as f:
         metadata = json.load(f)
+    sold_locations = np.load(LOCATIONS_PATH)
 except Exception as e:
     raise RuntimeError(f"Error loading model, preprocessor or metadata: {str(e)}")
 
-# Categorías vistas en entrenamiento (zipcodes de King County y estados).
+# Índice de las casas vendidas para validar la ubicación pedida.
+_locations_tree = BallTree(np.radians(sold_locations), metric="haversine")
+MAP_AREA = {
+    "center": [float(v) for v in sold_locations.mean(axis=0)],
+    "bounds": [[float(v) for v in sold_locations.min(axis=0)], [float(v) for v in sold_locations.max(axis=0)]],
+    "max_distance_km": MAX_DISTANCE_KM,
+}
+
+class InvalidInputError(ValueError):
+    """Input the model cannot price; `code` lets clients show their own message."""
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+# Categorías vistas en entrenamiento (estados de la casa).
 _encoder = preprocessor.named_transformers_["cat"].named_steps["onehot"]
 CATEGORIES = {
     column: sorted(str(c) for c in values)
@@ -38,7 +62,9 @@ def _compute_features_importance() -> dict:
     grouped = {}
     for name, value in zip(preprocessor.get_feature_names_out(), importances):
         transformer, column = name.split("__", 1)
-        if transformer == "cat":
+        if column in ("lat", "long"):
+            column = "location"
+        elif transformer == "cat":
             column = next(c for c in preprocessor.named_transformers_["cat"].feature_names_in_
                           if column.startswith(f"{c}_"))
         grouped[column] = grouped.get(column, 0.0) + float(value)
@@ -50,14 +76,27 @@ FEATURES_IMPORTANCE = _compute_features_importance()
 
 def model_info() -> dict:
     """Metadata of the served model plus the values the inputs accept."""
-    return {**metadata, "features_importance": FEATURES_IMPORTANCE, "categories": CATEGORIES}
+    return {**metadata, "features_importance": FEATURES_IMPORTANCE, "categories": CATEGORIES, "map_area": MAP_AREA}
 
 def _prepare(requests: list[HousePredictionRequest]) -> pd.DataFrame:
     input_data = pd.DataFrame([req.dict() for req in requests])
+    input_data['waterfront'] = input_data['waterfront'].astype(int)
     for column, allowed in CATEGORIES.items():
         unknown = set(input_data[column]) - set(allowed)
         if unknown:
-            raise ValueError(f"Unknown {column}: {', '.join(sorted(unknown))}. See /model-info for valid values.")
+            raise InvalidInputError(
+                f"unknown_{column}",
+                f"Unknown {column}: {', '.join(sorted(unknown))}. See /model-info for valid values.",
+            )
+
+    distances, _ = _locations_tree.query(np.radians(input_data[["lat", "long"]].to_numpy()), k=1)
+    too_far = distances[:, 0] * EARTH_RADIUS_KM > MAX_DISTANCE_KM
+    if too_far.any():
+        raise InvalidInputError(
+            "location_too_far",
+            f"Location too far from any house sold in King County (more than {MAX_DISTANCE_KM:g} km): "
+            "pick a point on land inside the county."
+        )
     input_data['bed_bath_ratio'] = input_data['bedrooms'] / input_data['bathrooms']
     return preprocessor.transform(input_data)
 

@@ -1,11 +1,19 @@
 # Modelo final. Elegido con validación cruzada de 5 folds sobre King County
-# (21.418 ventas tras la limpieza):
+# (21.418 ventas tras la limpieza).
+#
+# 1) Algoritmo, con las 6 entradas originales (zipcode como ubicación):
 #   Baseline mediana       R² -0.06  MAE $221.7k
 #   LinearRegression       R²  0.75  MAE $108.7k
 #   GB 100 árboles prof. 3 R²  0.74  MAE $115.9k
 #   RandomForest 300       R²  0.74  MAE  $98.3k
 #   GB 600 prof. 5         R²  0.78  MAE  $90.3k
-#   GB 600 prof. 5 + log   R²  0.80  MAE  $87.0k   <- elegido
+#   GB 600 prof. 5 + log   R²  0.80  MAE  $87.0k   <- algoritmo elegido
+#
+# 2) Variables, con ese algoritmo:
+#   6 entradas, zipcode                          R² 0.795  MAE $87.1k  MAPE 15.4%
+#   + grade, view, waterfront, sqft_lot, zipcode R² 0.871  MAE $72.7k  MAPE 13.4%
+#   + las mismas, lat/long                       R² 0.895  MAE $64.9k  MAPE 11.9%  <- elegido
+#   + las mismas, lat/long + zipcode             R² 0.897  MAE $63.5k  MAPE 11.7%  (dentro del ruido)
 # Las métricas del modelo entrenado se escriben en models/trained/model_metadata.json.
 model:
   name: house_price_model

@@ -24,11 +24,19 @@ def to_project_schema(df):
     return pd.DataFrame({
         "price": df["price"],
         "sqft": df["sqft_living"],
+        "sqft_lot": df["sqft_lot"],
         "bedrooms": df["bedrooms"],
         "bathrooms": df["bathrooms"],
-        "location": df["zipcode"],
         "year_built": df["yr_built"],
         "condition": df["condition"].map(CONDITION_LABELS),
+        # grade (1-13): calidad de construcción y acabados según el condado.
+        "grade": df["grade"],
+        # view (0-4): calidad de la vista; waterfront: frente al agua (0/1).
+        "view": df["view"],
+        "waterfront": df["waterfront"],
+        # Coordenadas de la casa: el modelo las usa en lugar del zipcode.
+        "lat": df["lat"],
+        "long": df["long"],
     })
 
 def clean_data(df):

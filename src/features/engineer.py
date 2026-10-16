@@ -7,6 +7,7 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 import joblib
+from pathlib import Path
 
 # Set up logging
 logging.basicConfig(
@@ -42,8 +43,11 @@ def create_preprocessor():
     logger.info("Creating preprocessor pipeline")
     
     # Define feature groups
-    categorical_features = ['location', 'condition']
-    numerical_features = ['sqft', 'bedrooms', 'bathrooms', 'year_built', 'bed_bath_ratio']
+    categorical_features = ['condition']
+    # lat/long sustituyen al zipcode: en validación cruzada dan R² 0.895 frente
+    # a 0.871 con zipcode, y la interfaz las obtiene de un clic en el mapa.
+    numerical_features = ['sqft', 'sqft_lot', 'bedrooms', 'bathrooms', 'year_built', 'bed_bath_ratio',
+                          'grade', 'view', 'waterfront', 'lat', 'long']
     
     # Preprocessing for numerical features
     numerical_transformer = Pipeline(steps=[
@@ -61,8 +65,7 @@ def create_preprocessor():
             ('num', numerical_transformer, numerical_features),
             ('cat', categorical_transformer, categorical_features)
         ],
-        # Con 70 zipcodes el one-hot saldría disperso; el CSV de features
-        # necesita una matriz densa.
+        # El CSV de features necesita una matriz densa.
         sparse_threshold=0
     )
     
@@ -72,8 +75,7 @@ def run_feature_engineering(input_file, output_file, preprocessor_file):
     """Full feature engineering pipeline."""
     # Load cleaned data
     logger.info(f"Loading data from {input_file}")
-    # location es un zipcode: debe leerse como texto, igual que lo envía la API.
-    df = pd.read_csv(input_file, dtype={'location': str})
+    df = pd.read_csv(input_file)
     
     # Create features
     df_featured = create_features(df)
@@ -89,6 +91,12 @@ def run_feature_engineering(input_file, output_file, preprocessor_file):
     # Save the preprocessor
     joblib.dump(preprocessor, preprocessor_file)
     logger.info(f"Saved preprocessor to {preprocessor_file}")
+
+    # Coordenadas de las casas vendidas: la API rechaza ubicaciones lejos de
+    # cualquier venta (agua, fuera del condado), donde el modelo no sabe nada.
+    locations_file = Path(preprocessor_file).with_name('sold_locations.npy')
+    np.save(locations_file, df[['lat', 'long']].to_numpy())
+    logger.info(f"Saved {len(df)} sold locations to {locations_file}")
     
     # Save fully preprocessed data
     df_transformed = pd.DataFrame(X_transformed)

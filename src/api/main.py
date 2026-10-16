@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from inference import predict_price, batch_predict, model_info
+from inference import predict_price, batch_predict, model_info, InvalidInputError
 from schemas import HousePredictionRequest, PredictionResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -46,16 +46,16 @@ async def health_check():
 async def predict(request: HousePredictionRequest):
     try:
         return predict_price(request)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    except InvalidInputError as e:
+        raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)})
 
 # Batch prediction endpoint
 @app.post("/batch-predict", response_model=list)
 async def batch_predict_endpoint(requests: list[HousePredictionRequest]):
     try:
         return batch_predict(requests)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    except InvalidInputError as e:
+        raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)})
 
 # Served model metadata: metrics, interval and valid input values
 @app.get("/model-info", response_model=dict)
