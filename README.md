@@ -191,6 +191,25 @@ curl -X POST "http://localhost:8000/predict" \
 Be sure to replace `http://localhost:8000/predict` with actual endpoint based on where its running. 
 
 
+## ✅ Tests and CI
+
+```bash
+# Unit tests of the data and feature pipeline
+pip install -r src/api/requirements.txt -r tests/requirements.txt
+python -m pytest tests/unit
+
+# API tests against a running API (default http://localhost:8000)
+API_URL=http://localhost:8000 python -m pytest tests/api
+```
+
+`.github/workflows/ci.yml` runs on every push and pull request to `main`:
+
+1. Unit tests.
+2. Builds the API image, which trains the model.
+3. **Quality gate:** `scripts/check_quality_gate.py` fails the build if the model's test metrics are worse than the minimums in `configs/model_config.yaml` (`quality_gate`).
+4. Starts the API and runs the API tests against it: validation, location checks, prices moving in the expected direction.
+5. Builds the Streamlit image and, on `main`, publishes both images to GitHub Container Registry (`ghcr.io/<owner>/house-price-api` and `house-price-predictor`).
+
 ## 🧠 Learn More About MLOps
 
 - Build and track ML pipelines

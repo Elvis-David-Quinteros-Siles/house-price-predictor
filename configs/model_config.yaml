@@ -28,3 +28,10 @@ model:
     learning_rate: 0.05
     subsample: 0.8
     random_state: 42
+
+# Mínimos que debe cumplir el modelo en test para publicarse (CI).
+# Modelo actual: R² 0.889, MAE $67.0k, MAPE 11.9 %.
+quality_gate:
+  min_r2: 0.87
+  max_mae: 72000
+  max_mape: 0.13
