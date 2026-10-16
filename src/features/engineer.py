@@ -1,7 +1,6 @@
 # src/features/engineer.py
 import pandas as pd
 import numpy as np
-from datetime import datetime
 import logging
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -23,15 +22,11 @@ def create_features(df):
     # Make a copy to avoid modifying the original dataframe
     df_featured = df.copy()
     
-    # Calculate house age
-    current_year = datetime.now().year
-    df_featured['house_age'] = current_year - df_featured['year_built']
-    logger.info("Created 'house_age' feature")
-    
-    # Price per square foot
-    df_featured['price_per_sqft'] = df_featured['price'] / df_featured['sqft']
-    logger.info("Created 'price_per_sqft' feature")
-    
+    # No se crea house_age (año actual - year_built): los precios son de
+    # 2014-2015 y la edad cambiaría con la fecha del build. Los árboles usan
+    # year_built directamente.
+    # Tampoco price_per_sqft: se deriva del precio (target) y filtraría la respuesta.
+
     # Bedroom to bathroom ratio
     df_featured['bed_bath_ratio'] = df_featured['bedrooms'] / df_featured['bathrooms']
     # Handle division by zero
@@ -48,9 +43,7 @@ def create_preprocessor():
     
     # Define feature groups
     categorical_features = ['location', 'condition']
-    # price_per_sqft se deriva del precio (target): usarlo como feature filtra
-    # la respuesta al modelo y en inferencia no existe, así que se excluye.
-    numerical_features = ['sqft', 'bedrooms', 'bathrooms', 'house_age', 'bed_bath_ratio']
+    numerical_features = ['sqft', 'bedrooms', 'bathrooms', 'year_built', 'bed_bath_ratio']
     
     # Preprocessing for numerical features
     numerical_transformer = Pipeline(steps=[
@@ -67,7 +60,10 @@ def create_preprocessor():
         transformers=[
             ('num', numerical_transformer, numerical_features),
             ('cat', categorical_transformer, categorical_features)
-        ]
+        ],
+        # Con 70 zipcodes el one-hot saldría disperso; el CSV de features
+        # necesita una matriz densa.
+        sparse_threshold=0
     )
     
     return preprocessor
@@ -76,7 +72,8 @@ def run_feature_engineering(input_file, output_file, preprocessor_file):
     """Full feature engineering pipeline."""
     # Load cleaned data
     logger.info(f"Loading data from {input_file}")
-    df = pd.read_csv(input_file)
+    # location es un zipcode: debe leerse como texto, igual que lo envía la API.
+    df = pd.read_csv(input_file, dtype={'location': str})
     
     # Create features
     df_featured = create_features(df)

@@ -97,6 +97,25 @@ python -m jupyterlab
 
 ---
 
+## 🏠 Dataset and model
+
+- **Data:** [House Sales in King County, USA](https://www.kaggle.com/datasets/harlfoxem/housesalesprediction) (CC0): 21,613 real sales in the Seattle area between May 2014 and May 2015, stored in `data/raw/kc_house_data.csv`. Predicted prices are therefore in 2014–2015 dollars.
+- **Cleaning:** repeated sales of the same house keep only the latest one (so a house cannot be in train and test at once) and 18 rows with impossible bedroom/bathroom counts are dropped, leaving 21,418 sales.
+- **Inputs:** living area, bedrooms, bathrooms, zipcode, year built and condition (King County scale: Poor, Fair, Average, Good, Very Good).
+- **Model selection** (5-fold cross-validation):
+
+| Model | R² | MAE | MAPE |
+|---|---|---|---|
+| Baseline (median) | -0.06 | $221.7k | 42.1% |
+| Linear regression | 0.75 | $108.7k | 21.3% |
+| Gradient Boosting, 100 trees, depth 3 | 0.74 | $115.9k | 23.9% |
+| Random Forest, 300 trees | 0.74 | $98.3k | 18.1% |
+| Gradient Boosting, 600 trees, depth 5 | 0.78 | $90.3k | 16.6% |
+| **Gradient Boosting, 600 trees, depth 5, log(price)** | **0.80** | **$87.0k** | **15.4%** |
+
+- **Served model:** the last one, trained with a fixed seed (`random_state: 42`), so every build produces the same model. On the 20% hold-out test set it scores R² 0.77, MAE $92.6k and MAPE 15.4%; these numbers are written to `models/trained/model_metadata.json` and exposed by `GET /model-info`.
+- **Price range:** an empirical 90% interval: 90% of the test houses sold between 0.72× and 1.43× the predicted price, and the API applies those ratios to each prediction.
+
 ## 🔁 Model Workflow
 
 ### 🧹 Step 1: Data Processing
@@ -104,7 +123,7 @@ python -m jupyterlab
 Clean and preprocess the raw housing dataset:
 
 ```bash
-python src/data/run_processing.py   --input data/raw/house_data.csv   --output data/processed/cleaned_house_data.csv
+python src/data/run_processing.py   --input data/raw/kc_house_data.csv   --output data/processed/cleaned_house_data.csv
 ```
 
 ---

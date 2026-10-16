@@ -52,7 +52,7 @@ jobs:
         
     - name: Process data
       run: |
-        python src/data/run_processing.py --input data/raw/house_data.csv --output data/processed/cleaned_house_data.csv 
+        python src/data/run_processing.py --input data/raw/kc_house_data.csv --output data/processed/cleaned_house_data.csv 
         
     - name: Engineer features
       run: |

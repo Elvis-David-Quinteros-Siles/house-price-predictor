@@ -1,62 +1,91 @@
+import json
+import time
 import joblib
 import pandas as pd
 from datetime import datetime
 from schemas import HousePredictionRequest, PredictionResponse
 
-# Load model and preprocessor
+# Load model, preprocessor and training metadata
 MODEL_PATH = "models/trained/house_price_model.pkl"
 PREPROCESSOR_PATH = "models/trained/preprocessor.pkl"
+METADATA_PATH = "models/trained/model_metadata.json"
 
 try:
     model = joblib.load(MODEL_PATH)
     preprocessor = joblib.load(PREPROCESSOR_PATH)
+    with open(METADATA_PATH) as f:
+        metadata = json.load(f)
 except Exception as e:
-    raise RuntimeError(f"Error loading model or preprocessor: {str(e)}")
+    raise RuntimeError(f"Error loading model, preprocessor or metadata: {str(e)}")
+
+# Categorías vistas en entrenamiento (zipcodes de King County y estados).
+_encoder = preprocessor.named_transformers_["cat"].named_steps["onehot"]
+CATEGORIES = {
+    column: sorted(str(c) for c in values)
+    for column, values in zip(preprocessor.named_transformers_["cat"].feature_names_in_, _encoder.categories_)
+}
+
+def _compute_features_importance() -> dict:
+    """
+    Global feature importance of the model, grouped by preprocessor input column
+    (the one-hot columns of location/condition are summed back together).
+    """
+    # Con log_target el modelo es un TransformedTargetRegressor.
+    importances = getattr(getattr(model, "regressor_", model), "feature_importances_", None)
+    if importances is None:
+        return {}
+
+    grouped = {}
+    for name, value in zip(preprocessor.get_feature_names_out(), importances):
+        transformer, column = name.split("__", 1)
+        if transformer == "cat":
+            column = next(c for c in preprocessor.named_transformers_["cat"].feature_names_in_
+                          if column.startswith(f"{c}_"))
+        grouped[column] = grouped.get(column, 0.0) + float(value)
+
+    total = sum(grouped.values()) or 1.0
+    return {k: round(v / total, 4) for k, v in sorted(grouped.items(), key=lambda kv: kv[1], reverse=True)}
+
+FEATURES_IMPORTANCE = _compute_features_importance()
+
+def model_info() -> dict:
+    """Metadata of the served model plus the values the inputs accept."""
+    return {**metadata, "features_importance": FEATURES_IMPORTANCE, "categories": CATEGORIES}
+
+def _prepare(requests: list[HousePredictionRequest]) -> pd.DataFrame:
+    input_data = pd.DataFrame([req.dict() for req in requests])
+    for column, allowed in CATEGORIES.items():
+        unknown = set(input_data[column]) - set(allowed)
+        if unknown:
+            raise ValueError(f"Unknown {column}: {', '.join(sorted(unknown))}. See /model-info for valid values.")
+    input_data['bed_bath_ratio'] = input_data['bedrooms'] / input_data['bathrooms']
+    return preprocessor.transform(input_data)
 
 def predict_price(request: HousePredictionRequest) -> PredictionResponse:
     """
     Predict house price based on input features.
     """
-    # Prepare input data
-    input_data = pd.DataFrame([request.dict()])
-    input_data['house_age'] = datetime.now().year - input_data['year_built']
-    input_data['bed_bath_ratio'] = input_data['bedrooms'] / input_data['bathrooms']
-    input_data['price_per_sqft'] = 0  # Dummy value for compatibility
+    start = time.perf_counter()
+    predicted_price = round(float(model.predict(_prepare([request]))[0]), 2)
 
-    # Preprocess input data
-    processed_features = preprocessor.transform(input_data)
-
-    # Make prediction
-    predicted_price = model.predict(processed_features)[0]
-
-    # Convert numpy.float32 to Python float and round to 2 decimal places
-    predicted_price = round(float(predicted_price), 2)
-
-    # Confidence interval (10% range)
-    confidence_interval = [predicted_price * 0.9, predicted_price * 1.1]
-
-    # Convert confidence interval values to Python float and round to 2 decimal places
-    confidence_interval = [round(float(value), 2) for value in confidence_interval]
+    # Intervalo empírico: el 90% de las casas de test cayó en este rango relativo.
+    interval = metadata["interval"]
+    confidence_interval = [
+        round(predicted_price * interval["low_ratio"], 2),
+        round(predicted_price * interval["high_ratio"], 2),
+    ]
 
     return PredictionResponse(
         predicted_price=predicted_price,
         confidence_interval=confidence_interval,
-        features_importance={},
-        prediction_time=datetime.now().isoformat()
+        features_importance=FEATURES_IMPORTANCE,
+        prediction_time=datetime.now().isoformat(),
+        latency_ms=round((time.perf_counter() - start) * 1000, 2),
     )
 
 def batch_predict(requests: list[HousePredictionRequest]) -> list[float]:
     """
     Perform batch predictions.
     """
-    input_data = pd.DataFrame([req.dict() for req in requests])
-    input_data['house_age'] = datetime.now().year - input_data['year_built']
-    input_data['bed_bath_ratio'] = input_data['bedrooms'] / input_data['bathrooms']
-    input_data['price_per_sqft'] = 0  # Dummy value for compatibility
-
-    # Preprocess input data
-    processed_features = preprocessor.transform(input_data)
-
-    # Make predictions
-    predictions = model.predict(processed_features)
-    return predictions.tolist()
+    predictions = model.predict(_prepare(requests))
+    return [round(float(p), 2) for p in predictions]

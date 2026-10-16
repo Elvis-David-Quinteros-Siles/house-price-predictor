@@ -5,11 +5,13 @@ import joblib
 import mlflow
 import mlflow.sklearn
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, r2_score
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
+from sklearn.compose import TransformedTargetRegressor
 import xgboost as xgb
 import yaml
+import json
 import logging
 from mlflow.tracking import MlflowClient
 import platform
@@ -70,6 +72,8 @@ def main(args):
 
     # Get model
     model = get_model_instance(model_cfg['best_model'], model_cfg['parameters'])
+    if model_cfg.get('log_target'):
+        model = TransformedTargetRegressor(regressor=model, func=np.log, inverse_func=np.exp)
 
     # Start MLflow run
     with mlflow.start_run(run_name="final_training"):
@@ -79,10 +83,16 @@ def main(args):
 
         mae = float(mean_absolute_error(y_test, y_pred))
         r2 = float(r2_score(y_test, y_pred))
+        mape = float(mean_absolute_percentage_error(y_test, y_pred))
+
+        # Intervalo empírico del 90%: cuantiles del cociente real/predicho en
+        # test. Se aplica como [pred * low, pred * high] en inferencia.
+        ratio = y_test.to_numpy() / y_pred
+        interval_low, interval_high = (float(q) for q in np.quantile(ratio, [0.05, 0.95]))
 
         # Log params and metrics
         mlflow.log_params(model_cfg['parameters'])
-        mlflow.log_metrics({'mae': mae, 'r2': r2})
+        mlflow.log_metrics({'mae': mae, 'r2': r2, 'mape': mape})
 
         # Log and register model
         mlflow.sklearn.log_model(model, "tuned_model")
@@ -147,7 +157,23 @@ def main(args):
         save_path = f"{args.models_dir}/trained/{model_name}.pkl"
         joblib.dump(model, save_path)
         logger.info(f"Saved trained model to: {save_path}")
-        logger.info(f"Final MAE: {mae:.2f}, R²: {r2:.4f}")
+
+        # Metadatos que la API devuelve junto a cada predicción.
+        metadata = {
+            "algorithm": model_cfg['best_model'],
+            "log_target": bool(model_cfg.get('log_target', False)),
+            "dataset": model_cfg.get('dataset', args.data),
+            "train_rows": int(len(X_train)),
+            "test_rows": int(len(X_test)),
+            "metrics": {"mae": round(mae, 2), "r2": round(r2, 4), "mape": round(mape, 4)},
+            "interval": {"coverage": 0.9, "low_ratio": round(interval_low, 4), "high_ratio": round(interval_high, 4)},
+        }
+        metadata_path = f"{args.models_dir}/trained/model_metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"Saved model metadata to: {metadata_path}")
+        logger.info(f"Final MAE: {mae:.2f}, R²: {r2:.4f}, MAPE: {mape:.2%}")
+        logger.info(f"90% interval ratio: [{interval_low:.3f}, {interval_high:.3f}]")
 
 if __name__ == "__main__":
     args = parse_args()

@@ -1,7 +1,5 @@
 import streamlit as st
 import requests
-import json
-import time
 import os
 import socket  # For hostname and IP address
 
@@ -12,12 +10,55 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+API_URL = os.getenv("API_URL", "http://model:8000").rstrip("/")
+
+# Escala oficial de King County, de peor a mejor.
+CONDITION_ORDER = ["Poor", "Fair", "Average", "Good", "Very Good"]
+
+FACTOR_LABELS = {
+    "sqft": "Square Footage",
+    "bedrooms": "Bedrooms",
+    "bathrooms": "Bathrooms",
+    "year_built": "Year Built",
+    "bed_bath_ratio": "Bedroom/Bathroom Ratio",
+    "location": "Location (zipcode)",
+    "condition": "Condition",
+}
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_model_info():
+    """Metrics of the served model and the values its inputs accept."""
+    response = requests.get(f"{API_URL}/model-info", timeout=5)
+    response.raise_for_status()
+    return response.json()
+
+def api_error_detail(error):
+    """Readable message for a failed API call (validation detail if there is one)."""
+    response = getattr(error, "response", None)
+    if response is not None:
+        try:
+            return response.json().get("detail", response.text)
+        except ValueError:
+            return response.text
+    return str(error)
+
+try:
+    model_info = get_model_info()
+except requests.exceptions.RequestException as e:
+    st.title("House Price Prediction")
+    st.error(f"The prediction API is not available right now: {api_error_detail(e)}")
+    st.stop()
+
+metrics = model_info["metrics"]
+
 # Add title and description
 st.title("House Price Prediction")
 st.markdown(
-    """
+    f"""
     <p style="font-size: 18px; color: gray;">
-        A simple MLOps demonstration project for real-time house price prediction
+        Estimated sale price for a house in King County, Washington (Seattle area).
+        Trained on {model_info["train_rows"] + model_info["test_rows"]:,} real home sales from 2014&ndash;2015,
+        so prices are in 2014&ndash;2015 dollars.
     </p>
     """,
     unsafe_allow_html=True,
@@ -31,32 +72,31 @@ with col1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
 
     # Square Footage slider
-    st.markdown(f"<p><strong>Square Footage:</strong> <span id='sqft-value'></span></p>", unsafe_allow_html=True)
-    sqft = st.slider("", 500, 5000, 1500, 50, label_visibility="collapsed", key="sqft")
-    st.markdown(f"<script>document.getElementById('sqft-value').innerText = '{sqft} sq ft';</script>", unsafe_allow_html=True)
+    sqft = st.slider("Square Footage (living area, sq ft)", 400, 6000, 1900, 50, key="sqft")
 
     # Bedrooms and Bathrooms in two columns
     bed_col, bath_col = st.columns(2)
     with bed_col:
-        st.markdown("<p><strong>Bedrooms</strong></p>", unsafe_allow_html=True)
-        bedrooms = st.selectbox("", options=[1, 2, 3, 4, 5, 6], index=2, label_visibility="collapsed")
+        bedrooms = st.selectbox("Bedrooms", options=list(range(1, 9)), index=2)
 
     with bath_col:
-        st.markdown("<p><strong>Bathrooms</strong></p>", unsafe_allow_html=True)
-        bathrooms = st.selectbox("", options=[1, 1.5, 2, 2.5, 3, 3.5, 4], index=2, label_visibility="collapsed")
+        bathroom_options = [x / 4 for x in range(3, 21)]  # 0.75 ... 5.0, como en King County
+        bathrooms = st.selectbox("Bathrooms", options=bathroom_options, index=bathroom_options.index(2.0))
 
-    # Location dropdown
-    st.markdown("<p><strong>Location</strong></p>", unsafe_allow_html=True)
-    location = st.selectbox("", options=["Downtown", "Urban", "Suburb", "Rural", "Waterfront", "Mountain"], index=2, label_visibility="collapsed")
+    # Location dropdown (zipcodes seen in training)
+    zipcodes = model_info["categories"]["location"]
+    location = st.selectbox(
+        "Location (zipcode)",
+        options=zipcodes,
+        index=zipcodes.index("98103") if "98103" in zipcodes else 0,
+    )
 
     # Condition dropdown
-    st.markdown("<p><strong>Condition</strong></p>", unsafe_allow_html=True)
-    condition = st.selectbox("", options=["Poor", "Fair", "Good", "Excellent"], index=2, label_visibility="collapsed")
+    conditions = [c for c in CONDITION_ORDER if c in model_info["categories"]["condition"]]
+    condition = st.selectbox("Condition", options=conditions, index=conditions.index("Average"))
 
     # Year Built slider
-    st.markdown(f"<p><strong>Year Built:</strong> <span id='year-value'></span></p>", unsafe_allow_html=True)
-    year_built = st.slider("", 1900, 2026, 2000, 1, label_visibility="collapsed", key="year")
-    st.markdown(f"<script>document.getElementById('year-value').innerText = '{year_built}';</script>", unsafe_allow_html=True)
+    year_built = st.slider("Year Built", 1900, 2015, 1975, 1, key="year")
 
     # Predict button
     predict_button = st.button("Predict Price", use_container_width=True)
@@ -83,35 +123,13 @@ with col2:
             }
 
             try:
-                # Get API endpoint from environment variable or use default
-                api_endpoint = os.getenv("API_URL", "http://model:8000")
-                predict_url = f"{api_endpoint.rstrip('/')}/predict"
-
-                st.write(f"Connecting to API at: {predict_url}")
-
-                # Make API call to FastAPI backend
-                response = requests.post(predict_url, json=api_data)
+                response = requests.post(f"{API_URL}/predict", json=api_data, timeout=10)
                 response.raise_for_status()  # Raise exception for bad status codes
-                prediction = response.json()
-
-                # Store prediction in session state
-                st.session_state.prediction = prediction
-                st.session_state.prediction_time = time.time()
+                st.session_state.prediction = response.json()
             except requests.exceptions.RequestException as e:
-                st.error(f"Error connecting to API: {e}")
-                st.warning("Using mock data for demonstration purposes. Please check your API connection.")
-                # For demo purposes, use mock data if API fails
-                st.session_state.prediction = {
-                    "predicted_price": 467145,
-                    "confidence_interval": [420430.5, 513859.5],
-                    "features_importance": {
-                        "sqft": 0.43,
-                        "location": 0.27,
-                        "bathrooms": 0.15
-                    },
-                    "prediction_time": "0.12 seconds"
-                }
-                st.session_state.prediction_time = time.time()
+                # Sin datos de ejemplo: si la API falla, no se muestra un precio.
+                st.session_state.pop("prediction", None)
+                st.error(f"Could not get a prediction: {api_error_detail(e)}")
 
     # Display prediction if available
     if "prediction" in st.session_state:
@@ -121,45 +139,52 @@ with col2:
         formatted_price = "${:,.0f}".format(pred["predicted_price"])
         st.markdown(f'<div class="prediction-value">{formatted_price}</div>', unsafe_allow_html=True)
 
-        # Display confidence score and model used
+        # Display test-set accuracy and model used
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown('<div class="info-card">', unsafe_allow_html=True)
-            st.markdown('<p class="info-label">Confidence Score</p>', unsafe_allow_html=True)
-            st.markdown('<p class="info-value">92%</p>', unsafe_allow_html=True)
+            st.markdown('<p class="info-label">Typical Error (test set)</p>', unsafe_allow_html=True)
+            st.markdown(
+                f'<p class="info-value">±{metrics["mape"]:.0%} &middot; ${metrics["mae"]:,.0f}</p>',
+                unsafe_allow_html=True,
+            )
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col_b:
             st.markdown('<div class="info-card">', unsafe_allow_html=True)
             st.markdown('<p class="info-label">Model Used</p>', unsafe_allow_html=True)
-            st.markdown('<p class="info-value">Gradient Boosting</p>', unsafe_allow_html=True)
+            st.markdown(
+                f'<p class="info-value">{model_info["algorithm"]} &middot; R² {metrics["r2"]:.2f}</p>',
+                unsafe_allow_html=True,
+            )
             st.markdown('</div>', unsafe_allow_html=True)
 
         # Display price range and prediction time
         col_c, col_d = st.columns(2)
         with col_c:
             st.markdown('<div class="info-card">', unsafe_allow_html=True)
-            st.markdown('<p class="info-label">Price Range</p>', unsafe_allow_html=True)
-            lower = "${:,.1f}".format(pred["confidence_interval"][0])
-            upper = "${:,.1f}".format(pred["confidence_interval"][1])
+            coverage = model_info["interval"]["coverage"]
+            st.markdown(f'<p class="info-label">Price Range ({coverage:.0%} of test homes)</p>', unsafe_allow_html=True)
+            lower = "${:,.0f}".format(pred["confidence_interval"][0])
+            upper = "${:,.0f}".format(pred["confidence_interval"][1])
             st.markdown(f'<p class="info-value">{lower} - {upper}</p>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col_d:
             st.markdown('<div class="info-card">', unsafe_allow_html=True)
             st.markdown('<p class="info-label">Prediction Time</p>', unsafe_allow_html=True)
-            st.markdown('<p class="info-value">0.12 seconds</p>', unsafe_allow_html=True)
+            st.markdown(f'<p class="info-value">{pred["latency_ms"]:.0f} ms</p>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         # Top factors
         st.markdown('<div class="top-factors">', unsafe_allow_html=True)
-        st.markdown("<p><strong>Top Factors Affecting Price:</strong></p>", unsafe_allow_html=True)
-        st.markdown("""
-        <ul>
-            <li>Square Footage</li>
-            <li>Number of Bedrooms/Bathrooms</li>
-        </ul>
-        """, unsafe_allow_html=True)
+        st.markdown("<p><strong>Top Factors Affecting Price (whole model):</strong></p>", unsafe_allow_html=True)
+        top_factors = list(pred.get("features_importance", {}).items())[:3]
+        items = "".join(
+            f"<li>{FACTOR_LABELS.get(name, name)} ({weight:.0%})</li>"
+            for name, weight in top_factors
+        )
+        st.markdown(f"<ul>{items}</ul>", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         # Display placeholder message
