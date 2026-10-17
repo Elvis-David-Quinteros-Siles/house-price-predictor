@@ -30,12 +30,15 @@ def price(**changes):
 def test_health():
     response = requests.get(f"{API_URL}/health", timeout=5)
     assert response.status_code == 200
-    assert response.json() == {"status": "healthy", "model_loaded": True}
+    body = response.json()
+    assert body["status"] == "healthy" and body["model_loaded"] is True
+    assert body["model_version"]
 
 
 def test_model_info():
     info = requests.get(f"{API_URL}/model-info", timeout=5).json()
     assert set(info["metrics"]) == {"mae", "r2", "mape"}
+    assert info["model_name"] == "house_price_model" and info["model_version"]
     assert info["categories"]["condition"] == ["Average", "Fair", "Good", "Poor", "Very Good"]
     assert 0 < info["interval"]["low_ratio"] < 1 < info["interval"]["high_ratio"]
     assert info["map_area"]["max_distance_km"] > 0

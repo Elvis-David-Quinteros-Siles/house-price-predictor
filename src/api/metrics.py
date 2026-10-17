@@ -26,7 +26,7 @@ MODEL_TEST_METRIC = Gauge(
 MODEL_INFO = Gauge(
     "house_price_model_info",
     "Model being served (value is always 1; details in the labels).",
-    ["algorithm", "train_rows"],
+    ["version", "algorithm", "train_rows"],
 )
 
 
@@ -41,7 +41,8 @@ for _endpoint in ("predict", "batch"):
 def publish_model_metadata(metadata: dict) -> None:
     for name, value in metadata["metrics"].items():
         MODEL_TEST_METRIC.labels(metric=name).set(value)
-    MODEL_INFO.labels(algorithm=metadata["algorithm"], train_rows=str(metadata["train_rows"])).set(1)
+    MODEL_INFO.labels(version=str(metadata.get("model_version", "unknown")), algorithm=metadata["algorithm"],
+                      train_rows=str(metadata["train_rows"])).set(1)
 
 
 def record(endpoint: str, prices: list[float]) -> None:

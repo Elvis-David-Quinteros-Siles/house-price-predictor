@@ -19,7 +19,7 @@ seaborn==0.12.2        # High-level interface for drawing attractive and informa
 # ---------------------------------------------
 # 📦 EXPERIMENT TRACKING & MODEL MANAGEMENT
 # ---------------------------------------------
-mlflow==2.3.1          # End-to-end ML lifecycle tracking, including experiment tracking, model packaging, and deployment
+mlflow==3.16.1         # End-to-end ML lifecycle tracking, including experiment tracking, model packaging, and deployment
 
 # ---------------------------------------------
 # ✅ TESTING
@@ -29,8 +29,8 @@ pytest==7.3.1          # Python testing framework — great for writing unit tes
 # ---------------------------------------------
 # ⚡ API DEVELOPMENT (FOR MODEL SERVING)
 # ---------------------------------------------
-fastapi==0.95.2        # Lightweight, high-performance web framework for serving ML models via REST APIs
-uvicorn==0.22.0        # ASGI server for running FastAPI apps — lightweight and fast
+fastapi==0.115.12      # Lightweight, high-performance web framework for serving ML models via REST APIs
+uvicorn==0.34.0        # ASGI server for running FastAPI apps — lightweight and fast
 #
 # ---------------------------------------------
 #  MISC

@@ -1,6 +1,44 @@
-version: "3.9"
-
+# Entorno local completo: MLflow (sqlite + artefactos en un volumen), API y Streamlit.
+#   docker compose up -d mlflow
+#   docker compose run --rm trainer        # entrena, registra y promueve a @champion
+#   docker compose up -d                   # API (carga @champion) y Streamlit
+# UI de MLflow en http://localhost:5555
 services:
+  mlflow:
+    build: ./deployment/mlflow
+    environment:
+      MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false"
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000 --workers 1
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --allowed-hosts mlflow:5000,localhost:5555,127.0.0.1:5555
+    ports:
+      - "5555:5000"
+    volumes:
+      - mlflow-data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - mlops-bootcamp
+
+  trainer:
+    profiles: [train]
+    build:
+      context: .
+      dockerfile: ./src/api/Dockerfile
+      target: train
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - mlops-bootcamp
+
   fastapi:
     build:
       context: .
@@ -9,7 +47,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - PYTHONUNBUFFERED=1
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MODEL_URI=models:/house_price_model@champion
+    depends_on:
+      mlflow:
+        condition: service_healthy
     networks:
       - mlops-bootcamp
 
@@ -26,6 +68,9 @@ services:
       - API_URL=http://fastapi:8000
     networks:
       - mlops-bootcamp
+
+volumes:
+  mlflow-data:
 
 networks:
   mlops-bootcamp:

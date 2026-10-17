@@ -1,9 +1,10 @@
 # CI/CD del House Price Predictor.
 #   1. tests:  pruebas unitarias del pipeline de datos y features.
-#   2. build:  construye la imagen de la API (entrena el modelo en el build),
-#              aplica la puerta de calidad, arranca la API y la prueba como un
-#              cliente; construye también la imagen de Streamlit.
-#   3. En push a main publica ambas imágenes en GitHub Container Registry.
+#   2. build:  construye el servidor MLflow, el entrenador y la API; levanta un
+#              MLflow efímero, entrena y registra el modelo, aplica la puerta de
+#              calidad al promoverlo a @champion y prueba la API cargándolo del
+#              registro, igual que en producción. Construye también Streamlit.
+#   3. En push a main publica las imágenes en GitHub Container Registry.
 name: CI
 
 on:
@@ -42,7 +43,7 @@ jobs:
         run: python -m pytest -v tests/unit
 
   build:
-    name: Build, quality gate and API tests
+    name: Train, quality gate and API tests
     needs: tests
     runs-on: ubuntu-latest
     permissions:
@@ -57,7 +58,28 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build API image (trains the model)
+      - name: Build MLflow server image
+        uses: docker/build-push-action@v6
+        with:
+          context: deployment/mlflow
+          tags: house-price-mlflow:ci
+          load: true
+          cache-from: type=gha,scope=mlflow
+          cache-to: type=gha,mode=max,scope=mlflow
+
+      - name: Build trainer image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/api/Dockerfile
+          target: train
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: house-price-trainer:ci
+          load: true
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Build API image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -65,21 +87,34 @@ jobs:
           tags: house-price-api:ci
           load: true
           cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
 
-      - name: Quality gate
+      - name: Start MLflow
         run: |
-          pip install pyyaml==6.0.2
-          docker create --name model-artifacts house-price-api:ci
-          docker cp model-artifacts:/app/models/trained/model_metadata.json model_metadata.json
-          docker rm model-artifacts
-          cat model_metadata.json
-          python scripts/check_quality_gate.py model_metadata.json configs/model_config.yaml
+          docker network create ci
+          docker run -d --name mlflow --network ci \
+            -e MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false \
+            house-price-mlflow:ci \
+            mlflow server --host 0.0.0.0 --port 5000 --workers 1 \
+              --backend-store-uri sqlite:////tmp/mlflow.db \
+              --artifacts-destination /tmp/artifacts \
+              --allowed-hosts mlflow:5000
+          for _ in $(seq 1 30); do
+            docker run --rm --network ci curlimages/curl:8.10.1 -sf http://mlflow:5000/health && exit 0
+            sleep 2
+          done
+          docker logs mlflow
+          exit 1
+
+      # Entrena, registra la versión como @challenger y la promueve a @champion
+      # solo si cumple la puerta de calidad (si no, falla el job).
+      - name: Train, register and promote
+        run: docker run --rm --network ci -e MLFLOW_TRACKING_URI=http://mlflow:5000 house-price-trainer:ci
 
       - name: Start API
         run: |
-          docker run -d --name api -p 8000:8000 house-price-api:ci
-          for _ in $(seq 1 30); do
+          docker run -d --name api --network ci -p 8000:8000 \
+            -e MLFLOW_TRACKING_URI=http://mlflow:5000 house-price-api:ci
+          for _ in $(seq 1 60); do
             curl -sf http://localhost:8000/health && exit 0
             sleep 2
           done
@@ -93,9 +128,11 @@ jobs:
           pip install -r tests/requirements.txt
           python -m pytest -v tests/api
 
-      - name: API logs
+      - name: Logs
         if: always()
-        run: docker logs api || true
+        run: |
+          docker logs api || true
+          docker logs mlflow 2>&1 | tail -50 || true
 
       - name: Build Streamlit image
         uses: docker/build-push-action@v6
@@ -114,7 +151,7 @@ jobs:
           # ghcr exige el nombre del dueño en minúsculas.
           registry="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          for image in house-price-api house-price-predictor; do
+          for image in house-price-api house-price-trainer house-price-predictor house-price-mlflow; do
             for tag in "${GITHUB_SHA::7}" latest; do
               docker tag "$image:ci" "$registry/$image:$tag"
               docker push "$registry/$image:$tag"

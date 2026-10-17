@@ -1,52 +1,63 @@
-# ── Etapa 1: pipeline de entrenamiento (datos → pipeline de variables + modelo)
-# Los .pkl no se versionan: se generan aquí a partir de data/raw y de
-# configs/model_config.yaml. MLflow registra en un file store local.
-FROM python:3.11-slim AS train
+# Dos imágenes desde el mismo Dockerfile, con las mismas dependencias:
+#   --target train  entrenador: datos -> modelo en el registro de MLflow
+#                   (scripts/train.sh). El modelo ya no se entrena en el build.
+#   (por defecto)   API de inferencia: carga MODEL_URI del registro al arrancar.
+
+# ── Base: dependencias comunes
+FROM python:3.11-slim AS base
 
 # LightGBM necesita la librería de OpenMP.
 RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 
+# Sin git en la imagen: el commit llega por GIT_SHA y MLflow no debe buscarlo.
+# Artefactos siempre a través del servidor MLflow: con S3 detrás, el cliente
+# pediría URLs prefirmadas de MinIO, al que la API y el entrenador no llegan.
+ENV PYTHONUNBUFFERED=1 \
+    GIT_PYTHON_REFRESH=quiet \
+    MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false \
+    MLFLOW_ENABLE_PROXY_MULTIPART_UPLOAD=false
+
+COPY src/api/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+RUN useradd --create-home --uid 1000 app
+
+# ── Entrenador
+FROM base AS train
+
 WORKDIR /work
-
-COPY src/api/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt mlflow==2.3.1 setuptools==65.5.0
-
 COPY configs/ configs/
 COPY data/raw/ data/raw/
 COPY src/ src/
+COPY scripts/ scripts/
+RUN mkdir -p data/processed models/trained && chown -R app data/processed models
 
-RUN mkdir -p data/processed models/trained \
- && python src/data/run_processing.py \
- && python src/models/train_model.py \
-      --config configs/model_config.yaml \
-      --data data/processed/cleaned_house_data.csv \
-      --models-dir models \
-      --mlflow-tracking-uri file:///work/mlruns
+# Commit del código, que queda como tag de cada versión del modelo.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
 
-# ── Etapa 2: API de inferencia
-FROM python:3.11-slim
+USER app
+CMD ["sh", "scripts/train.sh"]
 
-RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
- && rm -rf /var/lib/apt/lists/*
+# ── API de inferencia
+FROM base
 
 WORKDIR /app
-ENV PYTHONPATH=/app PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app \
+    MODEL_URI=models:/house_price_model@champion
 
-COPY src/api/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY --from=train /work/models/trained/house_price_model.pkl /work/models/trained/model_metadata.json /work/models/trained/sold_locations.npy /app/models/trained/
 COPY src/api/ /app/
-# El .pkl del pipeline referencia las clases de engineer.py.
+# El pipeline del modelo referencia las clases de engineer.py.
 COPY src/features/engineer.py /app/
+# Caché de la versión descargada (un volumen en el despliegue).
+RUN mkdir -p /app/models/cache && chown app /app/models/cache
 
-RUN useradd --create-home --uid 1000 app
 USER app
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

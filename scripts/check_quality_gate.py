@@ -10,12 +10,13 @@ import sys
 import yaml
 
 
-def main(metadata_path, config_path="configs/model_config.yaml"):
-    with open(metadata_path) as f:
-        metrics = json.load(f)["metrics"]
+def load_gate(config_path="configs/model_config.yaml"):
     with open(config_path) as f:
-        gate = yaml.safe_load(f)["quality_gate"]
+        return yaml.safe_load(f)["quality_gate"]
 
+
+def passes(metrics, gate):
+    """Imprime cada comprobación y devuelve si el modelo las cumple todas."""
     checks = [
         ("R²", metrics["r2"], ">=", gate["min_r2"], metrics["r2"] >= gate["min_r2"]),
         ("MAE", metrics["mae"], "<=", gate["max_mae"], metrics["mae"] <= gate["max_mae"]),
@@ -23,8 +24,13 @@ def main(metadata_path, config_path="configs/model_config.yaml"):
     ]
     for name, value, op, limit, ok in checks:
         print(f"{'OK  ' if ok else 'FAIL'} {name}: {value:,.4f} (required {op} {limit:,})")
+    return all(ok for *_, ok in checks)
 
-    if not all(ok for *_, ok in checks):
+
+def main(metadata_path, config_path="configs/model_config.yaml"):
+    with open(metadata_path) as f:
+        metrics = json.load(f)["metrics"]
+    if not passes(metrics, load_gate(config_path)):
         sys.exit("Quality gate failed: the new model is worse than the required minimum.")
     print("Quality gate passed.")
 

@@ -46,7 +46,8 @@ metrics.publish_model_metadata(metadata)
 # Health check endpoint
 @app.get("/health", response_model=dict)
 async def health_check():
-    return {"status": "healthy", "model_loaded": True}
+    # inference.py no se importa sin un modelo cargado: si responde, hay modelo.
+    return {"status": "healthy", "model_loaded": True, "model_version": metadata.get("model_version")}
 
 # Prediction endpoint
 @app.post("/predict", response_model=PredictionResponse)
