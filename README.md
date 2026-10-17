@@ -119,12 +119,24 @@ python -m jupyterlab
 |---|---|---|---|
 | Original six (zipcode as location) | 0.80 | $87.1k | 15.4% |
 | + grade, view, waterfront, lot size (zipcode) | 0.87 | $72.7k | 13.4% |
-| **+ grade, view, waterfront, lot size (latitude/longitude)** | **0.90** | **$64.9k** | **11.9%** |
+| + grade, view, waterfront, lot size (latitude/longitude) | 0.90 | $64.9k | 11.9% |
 | + the same, latitude/longitude and zipcode | 0.90 | $63.5k | 11.7% |
 
   Coordinates beat the zipcode, and adding the zipcode on top is within the noise (±0.008 R²), so the model uses coordinates only.
-- **Served model:** trained with a fixed seed (`random_state: 42`), so every build produces the same model. On the 20% hold-out test set it scores R² 0.89, MAE $67.0k and MAPE 11.9%; these numbers are written to `models/trained/model_metadata.json` and exposed by `GET /model-info`.
-- **Price range:** an empirical 90% interval: 90% of the test houses sold between 0.77× and 1.30× the predicted price, and the API applies those ratios to each prediction.
+
+  Finally, with the API inputs, other boosting libraries and two extra features:
+
+| Model and features | R² | MAE | MAPE |
+|---|---|---|---|
+| Gradient Boosting, 600 trees, depth 5 | 0.89 | $65.6k | 12.1% |
+| XGBoost | 0.90 | $63.7k | 11.8% |
+| LightGBM | 0.90 | $62.6k | 11.6% |
+| **LightGBM + sale month + prices of the 10 nearest sales** | **0.91** | **$59.9k** | **11.2%** |
+
+  The neighbour features are the mean log price, log price per sq ft, living area and distance of the 10 nearest sales in the training set (each house is left out of its own neighbours). The sale month captures the 2014–2015 price rise; predictions use the latest month. Hyperparameters were tuned with Optuna (44 trials), which only gained $0.1k over hand-set values. Asking for floors, basement and renovation year would bring the MAE to $58.6k, but the API does not take those inputs yet.
+- **One pipeline:** features, preprocessing and model are a single scikit-learn pipeline (`src/features/engineer.py`) fitted on the training split only and saved as one `.pkl`, so training and the API compute features with the same code.
+- **Served model:** trained with a fixed seed (`random_state: 42`), so every build produces the same model. On the 20% hold-out test set it scores R² 0.91, MAE $61.5k and MAPE 11.1% (5-fold CV on the training split: R² 0.90, MAE $60.3k); these numbers are written to `models/trained/model_metadata.json` and exposed by `GET /model-info`.
+- **Price range:** an empirical 90% interval taken from the cross-validation (out-of-fold) predictions: 90% of those houses sold between 0.78× and 1.26× the predicted price, and the API applies those ratios to each prediction. On the untouched test set the interval holds 90.5% of the houses.
 - **Location check:** the API rejects points more than 0.5 km from any sale in the dataset (lakes, Puget Sound, outside the county); 99% of the sales have another one within 0.55 km.
 - **Interface:** Streamlit in Spanish and English (selector at the top, or `?lang=en` in the URL), with an OpenStreetMap map to place the house.
 
@@ -140,22 +152,15 @@ python src/data/run_processing.py   --input data/raw/kc_house_data.csv   --outpu
 
 ---
 
-### 🧠 Step 2: Feature Engineering
+### 🧠 Step 2: Train the model
 
-Apply transformations and generate features:
-
-```bash
-python src/features/engineer.py   --input data/processed/cleaned_house_data.csv   --output data/processed/featured_house_data.csv   --preprocessor models/trained/preprocessor.pkl
-```
-
----
-
-### 📈 Step 3: Modeling & Experimentation
-
-Train your model and log everything to MLflow:
+The features, the preprocessing and the model form a single scikit-learn
+pipeline (`src/features/engineer.py`), fitted on the training split only. The
+script cross-validates it, evaluates it on the test split and logs everything to
+MLflow:
 
 ```bash
-python src/models/train_model.py   --config configs/model_config.yaml   --data data/processed/featured_house_data.csv   --models-dir models   --mlflow-tracking-uri http://localhost:5555
+python src/models/train_model.py   --config configs/model_config.yaml   --data data/processed/cleaned_house_data.csv   --models-dir models   --mlflow-tracking-uri http://localhost:5555
 ```
 
 ---

@@ -1,120 +1,127 @@
 # src/features/engineer.py
-import pandas as pd
-import numpy as np
-import logging
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.pipeline import Pipeline
-from sklearn.impute import SimpleImputer
-import joblib
-from pathlib import Path
+"""
+Variables del modelo y pipeline completo (variables -> preprocesado -> modelo).
 
-# Set up logging
+Todo vive en un único Pipeline de scikit-learn que se ajusta solo con los datos
+de entrenamiento y se guarda en un .pkl: la API carga el mismo objeto, así que
+entrenamiento e inferencia calculan las variables con el mismo código.
+La API importa este archivo como módulo `engineer` (el .pkl guarda esa ruta).
+"""
+import logging
+
+import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.neighbors import BallTree
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger('feature-engineering')
 
+EARTH_RADIUS_KM = 6371.0
+
+# Entradas que recibe el pipeline (las mismas que la API).
+INPUT_FEATURES = ['sqft', 'sqft_lot', 'bedrooms', 'bathrooms', 'year_built', 'condition',
+                  'grade', 'view', 'waterfront', 'lat', 'long']
+# Variables que añade HouseFeatures.
+NEIGHBOUR_FEATURES = ['nb_log_price', 'nb_log_price_sqft', 'nb_sqft', 'nb_dist_km']
+CATEGORICAL_FEATURES = ['condition']
+# lat/long sustituyen al zipcode: en validación cruzada dan R² 0.895 frente
+# a 0.871 con zipcode, y la interfaz las obtiene de un clic en el mapa.
+NUMERICAL_FEATURES = ['sqft', 'sqft_lot', 'bedrooms', 'bathrooms', 'year_built', 'bed_bath_ratio',
+                      'grade', 'view', 'waterfront', 'lat', 'long', 'sale_month'] + NEIGHBOUR_FEATURES
+
+
 def create_features(df):
-    """Create new features from existing data."""
-    logger.info("Creating new features")
-    
-    # Make a copy to avoid modifying the original dataframe
+    """Create the features that depend only on the house itself."""
     df_featured = df.copy()
-    
+
     # No se crea house_age (año actual - year_built): los precios son de
     # 2014-2015 y la edad cambiaría con la fecha del build. Los árboles usan
     # year_built directamente.
     # Tampoco price_per_sqft: se deriva del precio (target) y filtraría la respuesta.
-
-    # Bedroom to bathroom ratio
-    df_featured['bed_bath_ratio'] = df_featured['bedrooms'] / df_featured['bathrooms']
-    # Handle division by zero
-    df_featured['bed_bath_ratio'] = df_featured['bed_bath_ratio'].replace([np.inf, -np.inf], np.nan)
-    df_featured['bed_bath_ratio'] = df_featured['bed_bath_ratio'].fillna(0)
-    logger.info("Created 'bed_bath_ratio' feature")
-    
-    # Do NOT one-hot encode categorical variables here; let the preprocessor handle it
+    ratio = df_featured['bedrooms'] / df_featured['bathrooms']
+    df_featured['bed_bath_ratio'] = ratio.replace([np.inf, -np.inf], np.nan).fillna(0)
     return df_featured
 
+
+class HouseFeatures(BaseEstimator, TransformerMixin):
+    """
+    Adds create_features(), the sale month and the k nearest sales in training.
+
+    - sale_month (meses desde enero de 2014) recoge la subida de precios entre
+      2014 y 2015. Al predecir no hay fecha de venta: se usa el último mes de
+      entrenamiento, es decir, el nivel de precios más reciente.
+    - nb_*: media de log(precio), log(precio/sqft) y superficie de las k ventas
+      más cercanas, y su distancia media. Describen el barrio mejor que lat/long
+      solas. y llega ya en log (TransformedTargetRegressor).
+      Al ajustar, cada casa se excluye de sus propios vecinos: si no, su precio
+      se filtraría en sus variables.
+    """
+
+    def __init__(self, k=10):
+        self.k = k
+
+    def fit(self, X, y):
+        self._fit(X, y)
+        return self
+
+    def transform(self, X):
+        distances, idx = self.tree_.query(np.radians(X[['lat', 'long']].to_numpy()), k=self.k)
+        return self._add(X, idx, distances)
+
+    def fit_transform(self, X, y=None):
+        coords = self._fit(X, y)
+        distances, idx = self.tree_.query(coords, k=self.k + 1)
+        # Quita la propia casa; con coordenadas repetidas puede no salir la primera.
+        not_self = idx != np.arange(len(X))[:, None]
+        not_self[not_self.all(axis=1), -1] = False
+        idx = idx[not_self].reshape(len(X), self.k)
+        distances = distances[not_self].reshape(len(X), self.k)
+        return self._add(X, idx, distances)
+
+    def _fit(self, X, y):
+        if y is None:
+            raise ValueError("HouseFeatures needs the target to compute neighbour prices")
+        coords = np.radians(X[['lat', 'long']].to_numpy())
+        self.tree_ = BallTree(coords, metric='haversine')
+        self.log_price_ = np.asarray(y, dtype=float)
+        self.log_price_sqft_ = self.log_price_ - np.log(X['sqft'].to_numpy())
+        self.sqft_ = X['sqft'].to_numpy(dtype=float)
+        self.latest_sale_month_ = int(X['sale_month'].max())
+        return coords
+
+    def _add(self, X, idx, distances):
+        X = create_features(X)
+        if 'sale_month' not in X:
+            X['sale_month'] = self.latest_sale_month_
+        X['nb_log_price'] = self.log_price_[idx].mean(axis=1)
+        X['nb_log_price_sqft'] = self.log_price_sqft_[idx].mean(axis=1)
+        X['nb_sqft'] = self.sqft_[idx].mean(axis=1)
+        X['nb_dist_km'] = distances.mean(axis=1) * EARTH_RADIUS_KM
+        return X
+
+
 def create_preprocessor():
-    """Create a preprocessing pipeline."""
-    logger.info("Creating preprocessor pipeline")
-    
-    # Define feature groups
-    categorical_features = ['condition']
-    # lat/long sustituyen al zipcode: en validación cruzada dan R² 0.895 frente
-    # a 0.871 con zipcode, y la interfaz las obtiene de un clic en el mapa.
-    numerical_features = ['sqft', 'sqft_lot', 'bedrooms', 'bathrooms', 'year_built', 'bed_bath_ratio',
-                          'grade', 'view', 'waterfront', 'lat', 'long']
-    
-    # Preprocessing for numerical features
-    numerical_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='mean'))
-    ])
-    
-    # Preprocessing for categorical features
-    categorical_transformer = Pipeline(steps=[
-        ('onehot', OneHotEncoder(handle_unknown='ignore'))
-    ])
-    
-    # Combine preprocessors in a column transformer
-    preprocessor = ColumnTransformer(
+    """Imputation and one-hot encoding of the columns the model uses."""
+    return ColumnTransformer(
         transformers=[
-            ('num', numerical_transformer, numerical_features),
-            ('cat', categorical_transformer, categorical_features)
+            ('num', SimpleImputer(strategy='mean'), NUMERICAL_FEATURES),
+            ('cat', OneHotEncoder(handle_unknown='ignore'), CATEGORICAL_FEATURES),
         ],
-        # El CSV de features necesita una matriz densa.
-        sparse_threshold=0
+        sparse_threshold=0,
     )
-    
-    return preprocessor
 
-def run_feature_engineering(input_file, output_file, preprocessor_file):
-    """Full feature engineering pipeline."""
-    # Load cleaned data
-    logger.info(f"Loading data from {input_file}")
-    df = pd.read_csv(input_file)
-    
-    # Create features
-    df_featured = create_features(df)
-    logger.info(f"Created featured dataset with shape: {df_featured.shape}")
-    
-    # Create and fit the preprocessor
-    preprocessor = create_preprocessor()
-    X = df_featured.drop(columns=['price'], errors='ignore')  # Features only
-    y = df_featured['price'] if 'price' in df_featured.columns else None  # Target column (if available)
-    X_transformed = preprocessor.fit_transform(X)
-    logger.info("Fitted the preprocessor and transformed the features")
-    
-    # Save the preprocessor
-    joblib.dump(preprocessor, preprocessor_file)
-    logger.info(f"Saved preprocessor to {preprocessor_file}")
 
-    # Coordenadas de las casas vendidas: la API rechaza ubicaciones lejos de
-    # cualquier venta (agua, fuera del condado), donde el modelo no sabe nada.
-    locations_file = Path(preprocessor_file).with_name('sold_locations.npy')
-    np.save(locations_file, df[['lat', 'long']].to_numpy())
-    logger.info(f"Saved {len(df)} sold locations to {locations_file}")
-    
-    # Save fully preprocessed data
-    df_transformed = pd.DataFrame(X_transformed)
-    if y is not None:
-        df_transformed['price'] = y.values
-    df_transformed.to_csv(output_file, index=False)
-    logger.info(f"Saved fully preprocessed data to {output_file}")
-    
-    return df_transformed
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Feature engineering for housing data.')
-    parser.add_argument('--input', required=True, help='Path to cleaned CSV file')
-    parser.add_argument('--output', required=True, help='Path for output CSV file (engineered features)')
-    parser.add_argument('--preprocessor', required=True, help='Path for saving the preprocessor')
-    
-    args = parser.parse_args()
-    
-    run_feature_engineering(args.input, args.output, args.preprocessor)
+def build_pipeline(model, neighbours=10):
+    """Full pipeline: raw inputs (INPUT_FEATURES + sale_month) -> price model."""
+    return Pipeline(steps=[
+        ('features', HouseFeatures(k=neighbours)),
+        ('preprocessor', create_preprocessor()),
+        ('model', model),
+    ])

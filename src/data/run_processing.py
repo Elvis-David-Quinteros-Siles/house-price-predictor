@@ -21,6 +21,7 @@ def load_data(file_path):
 
 def to_project_schema(df):
     """Map the King County columns to the fields the API and the UI use."""
+    sale_date = pd.to_datetime(df["date"].str[:8], format="%Y%m%d")
     return pd.DataFrame({
         "price": df["price"],
         "sqft": df["sqft_living"],
@@ -37,6 +38,9 @@ def to_project_schema(df):
         # Coordenadas de la casa: el modelo las usa en lugar del zipcode.
         "lat": df["lat"],
         "long": df["long"],
+        # Meses desde enero de 2014 (1 = enero 2014): los precios subieron
+        # durante 2014-2015 y el modelo lo aprende de aquí.
+        "sale_month": (sale_date.dt.year - 2014) * 12 + sale_date.dt.month,
     })
 
 def clean_data(df):

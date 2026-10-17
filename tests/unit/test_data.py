@@ -18,7 +18,7 @@ def test_maps_to_project_schema(raw_sales):
     cleaned = clean_data(raw_sales)
     assert list(cleaned.columns) == [
         "price", "sqft", "sqft_lot", "bedrooms", "bathrooms", "year_built",
-        "condition", "grade", "view", "waterfront", "lat", "long",
+        "condition", "grade", "view", "waterfront", "lat", "long", "sale_month",
     ]
     assert set(cleaned["condition"]) <= set(CONDITION_LABELS.values())
     assert cleaned.notnull().all().all()

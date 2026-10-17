@@ -7,31 +7,50 @@
 #   GB 100 árboles prof. 3 R²  0.74  MAE $115.9k
 #   RandomForest 300       R²  0.74  MAE  $98.3k
 #   GB 600 prof. 5         R²  0.78  MAE  $90.3k
-#   GB 600 prof. 5 + log   R²  0.80  MAE  $87.0k   <- algoritmo elegido
+#   GB 600 prof. 5 + log   R²  0.80  MAE  $87.0k
 #
 # 2) Variables, con ese algoritmo:
 #   6 entradas, zipcode                          R² 0.795  MAE $87.1k  MAPE 15.4%
 #   + grade, view, waterfront, sqft_lot, zipcode R² 0.871  MAE $72.7k  MAPE 13.4%
-#   + las mismas, lat/long                       R² 0.895  MAE $64.9k  MAPE 11.9%  <- elegido
+#   + las mismas, lat/long                       R² 0.895  MAE $64.9k  MAPE 11.9%
 #   + las mismas, lat/long + zipcode             R² 0.897  MAE $63.5k  MAPE 11.7%  (dentro del ruido)
+#
+# 3) Con las entradas de la API (lat/long, sin zipcode), octubre 2026:
+#   GradientBoosting 600 prof. 5                 R² 0.894  MAE $65.6k  MAPE 12.1%
+#   HistGradientBoosting                         R² 0.890  MAE $65.4k  MAPE 12.1%
+#   XGBoost 2000                                 R² 0.899  MAE $63.7k  MAPE 11.8%
+#   LightGBM 2000                                R² 0.900  MAE $62.6k  MAPE 11.6%
+#   LightGBM + mes de venta + 10 vecinos         R² 0.907  MAE $59.9k  MAPE 11.2%  <- elegido
+#   (con floors, sótano y año de reforma bajaría a $58.6k, pero la API tendría
+#   que pedir esos datos; sqft_living15/sqft_lot15 no aportan sobre los vecinos.)
+#   Hiperparámetros: Optuna, 44 pruebas, MAE CV $59.8k (a mano: $59.9k).
 # Las métricas del modelo entrenado se escriben en models/trained/model_metadata.json.
 model:
   name: house_price_model
-  best_model: GradientBoosting
+  best_model: LightGBM
   target_variable: price
   # Entrena sobre log(price): los precios están muy sesgados ($75k-$7.7M).
+  # Obligatorio: las variables de vecinos usan el precio en log.
   log_target: true
+  # Ventas más cercanas cuyo precio describe el barrio (src/features/engineer.py).
+  neighbours: 10
   dataset: King County House Sales 2014-2015 (Kaggle, CC0)
   parameters:
-    n_estimators: 600
-    max_depth: 5
-    learning_rate: 0.05
-    subsample: 0.8
+    n_estimators: 1300
+    learning_rate: 0.013
+    num_leaves: 75
+    min_child_samples: 12
+    subsample: 0.77
+    subsample_freq: 1
+    colsample_bytree: 0.7
+    # Importancia por ganancia (la de serie cuenta divisiones), para /model-info.
+    importance_type: gain
     random_state: 42
+    verbose: -1
 
 # Mínimos que debe cumplir el modelo en test para publicarse (CI).
-# Modelo actual: R² 0.889, MAE $67.0k, MAPE 11.9 %.
+# Modelo actual: R² 0.907, MAE $61.5k, MAPE 11.1 %.
 quality_gate:
-  min_r2: 0.87
-  max_mae: 72000
-  max_mape: 0.13
+  min_r2: 0.895
+  max_mae: 65000
+  max_mape: 0.12

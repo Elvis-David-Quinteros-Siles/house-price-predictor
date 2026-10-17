@@ -9,6 +9,7 @@ numpy==1.24.3          # Numerical operations, arrays, and matrix support (used 
 # ---------------------------------------------
 scikit-learn==1.2.2    # Classic ML models (regression, classification, clustering), preprocessing, model evaluation
 xgboost==1.7.5
+lightgbm==4.3.0
 # ---------------------------------------------
 # 📈 VISUALIZATION
 # ---------------------------------------------

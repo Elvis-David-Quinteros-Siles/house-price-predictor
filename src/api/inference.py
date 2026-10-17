@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 from sklearn.neighbors import BallTree
 from datetime import datetime
+from engineer import EARTH_RADIUS_KM, INPUT_FEATURES
 from schemas import HousePredictionRequest, PredictionResponse
 
-# Load model, preprocessor and training metadata
+# Load model (full pipeline: features + preprocessor + regressor) and training metadata
 MODEL_PATH = "models/trained/house_price_model.pkl"
-PREPROCESSOR_PATH = "models/trained/preprocessor.pkl"
 METADATA_PATH = "models/trained/model_metadata.json"
 LOCATIONS_PATH = "models/trained/sold_locations.npy"
 
@@ -17,16 +17,18 @@ LOCATIONS_PATH = "models/trained/sold_locations.npy"
 # El 99 % de las ventas tiene otra a menos de 0,55 km; con 1 km se aceptaban
 # puntos dentro del lago Washington cerca de la orilla.
 MAX_DISTANCE_KM = 0.5
-EARTH_RADIUS_KM = 6371.0
 
 try:
     model = joblib.load(MODEL_PATH)
-    preprocessor = joblib.load(PREPROCESSOR_PATH)
     with open(METADATA_PATH) as f:
         metadata = json.load(f)
     sold_locations = np.load(LOCATIONS_PATH)
 except Exception as e:
-    raise RuntimeError(f"Error loading model, preprocessor or metadata: {str(e)}")
+    raise RuntimeError(f"Error loading model or metadata: {str(e)}")
+
+# El modelo es un TransformedTargetRegressor (log del precio) sobre el pipeline.
+_pipeline = model.regressor_
+preprocessor = _pipeline.named_steps["preprocessor"]
 
 # Índice de las casas vendidas para validar la ubicación pedida.
 _locations_tree = BallTree(np.radians(sold_locations), metric="haversine")
@@ -43,7 +45,7 @@ class InvalidInputError(ValueError):
         self.code = code
 
 # Categorías vistas en entrenamiento (estados de la casa).
-_encoder = preprocessor.named_transformers_["cat"].named_steps["onehot"]
+_encoder = preprocessor.named_transformers_["cat"]
 CATEGORIES = {
     column: sorted(str(c) for c in values)
     for column, values in zip(preprocessor.named_transformers_["cat"].feature_names_in_, _encoder.categories_)
@@ -52,17 +54,20 @@ CATEGORIES = {
 def _compute_features_importance() -> dict:
     """
     Global feature importance of the model, grouped by preprocessor input column
-    (the one-hot columns of location/condition are summed back together).
+    (the one-hot columns of condition are summed back together, and lat/long and
+    the neighbour prices are shown as "location").
     """
-    # Con log_target el modelo es un TransformedTargetRegressor.
-    importances = getattr(getattr(model, "regressor_", model), "feature_importances_", None)
+    importances = getattr(_pipeline.named_steps["model"], "feature_importances_", None)
     if importances is None:
         return {}
 
     grouped = {}
     for name, value in zip(preprocessor.get_feature_names_out(), importances):
         transformer, column = name.split("__", 1)
-        if column in ("lat", "long"):
+        if column == "sale_month":
+            # Al predecir siempre vale el último mes: no explica una predicción.
+            continue
+        if column in ("lat", "long") or column.startswith("nb_"):
             column = "location"
         elif transformer == "cat":
             column = next(c for c in preprocessor.named_transformers_["cat"].feature_names_in_
@@ -97,10 +102,7 @@ def _prepare(requests: list[HousePredictionRequest]) -> pd.DataFrame:
             f"Location too far from any house sold in King County (more than {MAX_DISTANCE_KM:g} km): "
             "pick a point on land inside the county."
         )
-    input_data['bed_bath_ratio'] = input_data['bedrooms'] / input_data['bathrooms']
-    # El modelo se entrenó desde el CSV de features, con columnas "0".."n":
-    # se le pasan con esos nombres para que scikit-learn no avise en cada petición.
-    return pd.DataFrame(preprocessor.transform(input_data), columns=model.feature_names_in_)
+    return input_data[INPUT_FEATURES]
 
 def predict_price(request: HousePredictionRequest) -> PredictionResponse:
     """
