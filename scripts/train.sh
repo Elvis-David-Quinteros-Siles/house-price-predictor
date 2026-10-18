@@ -1,6 +1,6 @@
 #!/bin/sh
 # Ciclo de entrenamiento completo: datos -> modelo registrado en MLflow
-# (@challenger) -> puerta de calidad -> @champion.
+# (@challenger) -> puerta de calidad -> champion vs challenger -> @champion.
 # Necesita MLFLOW_TRACKING_URI. Con PROMOTE=false solo registra el challenger.
 set -eu
 

@@ -166,16 +166,22 @@ Each version carries its lineage as tags: commit (`git_sha`), hash of the raw
 dataset (`dataset_sha256`) and library versions. Next to the model, the run
 stores what the API needs to serve it (`serving/model_metadata.json`,
 `serving/sold_locations.npy` and `serving/reference_profile.json`, the
-training-data profile used to measure drift).
+training-data profile used to measure drift) and its test split
+(`evaluation/holdout.csv`).
 
 ### 🚦 Step 3: Promote to production
 
 ```bash
-python scripts/promote_model.py                          # @challenger -> @champion if it passes the quality gate
-python scripts/promote_model.py --version 3              # roll back to a previous version
+python scripts/promote_model.py                          # @challenger -> @champion if it passes both checks
+python scripts/promote_model.py --version 3              # roll back to a previous version (no comparison)
 ```
 
-The quality gate is in `configs/model_config.yaml` (`quality_gate`).
+The challenger has to pass two checks:
+
+1. **Quality gate:** absolute minimums on its own test metrics (`quality_gate` in `configs/model_config.yaml`).
+2. **Champion vs challenger:** both versions predict the challenger's test split (`evaluation/holdout.csv`), so they are scored on the same houses. The challenger wins if its MAE is no more than `max_mae_increase` (1 %) above the champion's (`champion_challenger`). Otherwise it stays `@challenger` and the script exits with an error. `--skip-comparison` overrides the comparison.
+
+Each comparison is logged as a run `vN vs vM` in the model's experiment, and the challenger version gets a `vs_champion` tag with the result.
 `scripts/train.sh` chains the three steps; it is the trainer image's command
 (`docker build --target train -f src/api/Dockerfile .`).
 
@@ -255,7 +261,7 @@ API_URL=http://localhost:8000 python -m pytest tests/api
 
 1. Unit tests.
 2. Builds the MLflow server, trainer and API images and starts a throwaway MLflow server.
-3. Trains the model and registers it; **quality gate:** promoting it to `@champion` fails the build if its test metrics are worse than the minimums in `configs/model_config.yaml` (`quality_gate`).
+3. Trains the model and registers it; **quality gate:** promoting it to `@champion` fails the build if its test metrics are worse than the minimums in `configs/model_config.yaml` (`quality_gate`). CI starts with an empty registry, so there is no champion to compare against.
 4. Starts the API, which loads `@champion` from the registry as in production, and runs the API tests against it: validation, location checks, prices moving in the expected direction.
 5. Builds the Streamlit image and, on `main`, publishes the images to GitHub Container Registry (`ghcr.io/<owner>/house-price-api`, `house-price-trainer`, `house-price-mlflow` and `house-price-predictor`).
 

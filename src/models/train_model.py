@@ -232,6 +232,12 @@ def main(args):
         mlflow.log_artifact(str(locations_path), SERVING_ARTIFACTS)
         mlflow.log_artifact(str(profile_path), SERVING_ARTIFACTS)
 
+        # Test de esta versión: scripts/promote_model.py enfrenta aquí al champion
+        # y al challenger, con las mismas casas para los dos.
+        holdout_path = trained_dir / "holdout.csv"
+        X_test.assign(**{target: y_test}).to_csv(holdout_path, index=False)
+        mlflow.log_artifact(str(holdout_path), "evaluation")
+
         logger.info(f"CV   MAE: {cv_metrics['mae']:.2f}, R²: {cv_metrics['r2']:.4f}, MAPE: {cv_metrics['mape']:.2%}")
         logger.info(f"Test MAE: {mae:.2f}, R²: {r2:.4f}, MAPE: {mape:.2%}")
         logger.info(f"90% interval ratio: [{interval_low:.3f}, {interval_high:.3f}], test coverage {coverage:.1%}")

@@ -54,3 +54,10 @@ quality_gate:
   min_r2: 0.895
   max_mae: 65000
   max_mape: 0.12
+
+# Además de la puerta, el challenger tiene que aguantar contra el champion en
+# producción, las dos versiones sobre el mismo test (scripts/promote_model.py).
+# Gana si su MAE no supera el del champion en más de este margen relativo
+# (1 % ≈ $600): con datos más recientes, un empate dentro del ruido promueve.
+champion_challenger:
+  max_mae_increase: 0.01
