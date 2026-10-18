@@ -1,0 +1,25 @@
+flowchart TD
+    classDef step fill:#f1f5f9,stroke:#475569,color:#0f172a
+    classDef dec fill:#fef3c7,stroke:#b45309,color:#78350f
+    classDef ok fill:#dcfce7,stroke:#15803d,color:#14532d
+    classDef warn fill:#ffedd5,stroke:#c2410c,color:#7c2d12
+    classDef bad fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+
+    T(["release-sales terminó<br/>o cron diario 06:00"]):::step --> A
+    A{"¿Datos nuevos?<br/>sha256 del dataset ≠<br/>tag dataset_sha256"}:::dec
+    A -->|no| B{"¿DriftDeDatosDelModelo<br/>activa?"}:::dec
+    B -->|no| Z1["ÉXITO<br/>sin cambios"]:::ok
+    B -->|sí| Z2["INESTABLE + correo<br/>drift sin datos nuevos"]:::warn
+    A -->|sí| V{"validate_data.py<br/>¿contrato OK?"}:::dec
+    V -->|"exit 5"| Z7["FALLIDO + correo<br/>datos inválidos · sigue el champion"]:::bad
+    V -->|sí| C["Error real del champion<br/>con las ventas nuevas"]:::step
+    C -->|"exit 4 = degradado"| C2["se anota: champion degradado"]:::warn
+    C --> D["train.sh: entrenar → puerta<br/>→ champion vs challenger"]:::step
+    C2 --> D
+    D -->|"exit 3 y degradado"| Z3["INESTABLE + correo<br/>champion degradado, challenger perdió"]:::bad
+    D -->|"exit 3"| Z4["INESTABLE + correo<br/>challenger perdió"]:::warn
+    D -->|"otro error"| Z6["FALLIDO + correo"]:::bad
+    D -->|"exit 0"| E["Reiniciar la API<br/>esperar healthy"]:::step
+    E --> F{"¿/model-info sirve<br/>el nuevo @champion?"}:::dec
+    F -->|sí| Z5["ÉXITO + correo<br/>vN en producción"]:::ok
+    F -->|no| Z6

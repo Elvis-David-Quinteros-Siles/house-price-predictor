@@ -1,0 +1,57 @@
+flowchart LR
+    classDef src fill:#dcfce7,stroke:#15803d,color:#14532d
+    classDef calc fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+    classDef met fill:#fef3c7,stroke:#b45309,color:#78350f
+    classDef alert fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+    classDef view fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+
+    subgraph API["API · cada predicción"]
+        direction TB
+        REQ["POST /predict"]:::src
+        JSONL[("predictions-AAAA-MM.jsonl")]:::src
+        WIN["Ventana: últimas 500"]:::calc
+        REF[("reference_profile.json<br/>deciles de entrenamiento")]:::calc
+        PSI["PSI por variable<br/>+ precio predicho"]:::calc
+        REQ --> JSONL --> WIN --> PSI
+        REF --> PSI
+    end
+
+    subgraph CTX["CT · cada mes de ventas"]
+        direction TB
+        NEW["Ventas posteriores<br/>a data_until"]:::src
+        EVAL["MAE · MAPE · sesgo<br/>cobertura del 90 %"]:::calc
+        RJ[("real-error.json")]:::calc
+        NEW --> EVAL --> RJ
+    end
+
+    subgraph MET["/metrics"]
+        direction TB
+        M1["http_requests_total<br/>http_request_duration_seconds"]:::met
+        M2["house_price_predictions_total<br/>house_price_predicted_price_dollars"]:::met
+        M3["house_price_model_info<br/>house_price_model_test_metric"]:::met
+        M4["house_price_feature_drift_psi<br/>house_price_drift_window_samples"]:::met
+        M5["house_price_real_*<br/>degraded · mape_limit"]:::met
+    end
+
+    PSI --> M4
+    RJ -->|"RealErrorCollector<br/>en cada scrape"| M5
+    REQ --> M1
+    REQ --> M2
+
+    PROM["Prometheus<br/>scrape 15 s"]:::view
+    MET --> PROM
+
+    R1{{"DriftDeDatosDelModelo<br/>PSI > 0.25 · ≥ 100 casas · 1 h"}}:::alert
+    R2{{"ErrorRealDelModeloAlto<br/>degradado y aún servido · 15 min"}}:::alert
+    R3{{"SistemaCaido"}}:::alert
+    PROM --> R1
+    PROM --> R2
+    PROM --> R3
+
+    AM["Alertmanager<br/>ruta sistema=house-price"]:::alert
+    R1 --> AM
+    R2 --> AM
+    R3 --> AM
+    AM -->|"correo · aviso y resuelta"| MAIL(["contacto@ → Gmail"]):::view
+    PROM --> GRAF["Grafana<br/>dashboard House Price Predictor"]:::view
+    PROM -->|"¿drift activo?"| JEN["Jenkins CT"]:::view

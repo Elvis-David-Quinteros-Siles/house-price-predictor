@@ -1,0 +1,18 @@
+stateDiagram-v2
+    direction LR
+    [*] --> Registrada: train_model.py
+    Registrada --> Challenger: alias challenger
+    Challenger --> Descartada: no pasa la puerta de calidad
+    Challenger --> Descartada: pierde contra el champion
+    Challenger --> Champion: gana (promote_model.py)
+    state Champion {
+        direction LR
+        Sirviendo --> Evaluada: llega un mes de ventas
+        Evaluada --> Sirviendo: error real OK
+        Evaluada --> Degradada: MAPE o sesgo fuera de límite
+        Degradada --> Sirviendo: el challenger pierde (alerta activa)
+    }
+    Champion --> Retirada: un challenger gana
+    Retirada --> Champion: rollback --version N
+    Descartada --> [*]
+    Retirada --> [*]

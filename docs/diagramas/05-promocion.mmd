@@ -1,0 +1,20 @@
+flowchart TD
+    classDef ok fill:#dcfce7,stroke:#15803d,color:#14532d
+    classDef bad fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+    classDef warn fill:#ffedd5,stroke:#c2410c,color:#7c2d12
+    classDef step fill:#f1f5f9,stroke:#475569,color:#0f172a
+    classDef dec fill:#fef3c7,stroke:#b45309,color:#78350f
+
+    A(["promote_model.py<br/>candidato = @challenger"]):::step --> B
+    RB(["promote_model.py --version K<br/>rollback"]):::warn --> B
+    B{"Puerta de calidad<br/>sobre su propio test"}:::dec
+    B -->|"R² < 0.895 · MAE > $65k<br/>· MAPE > 12 %"| X["exit 1<br/>no se publica"]:::bad
+    B -->|pasa| C{"¿Rollback o<br/>registro vacío?"}:::dec
+    C -->|"sí: sin comparar"| P
+    C -->|"no: hay @champion vM"| D["Descargar holdout.csv<br/>del run del challenger"]:::step
+    D --> E["vM y vN predicen<br/>las mismas casas"]:::step
+    E --> F["Run 'vM vs vN' en MLflow<br/>tag vs_champion"]:::step
+    F --> G{"MAE(vN) ≤<br/>MAE(vM) × 1.01"}:::dec
+    G -->|no| L["exit 3<br/>sigue vM · vN queda @challenger"]:::warn
+    G -->|sí| P["@champion = candidato<br/>tag promoted_at"]:::ok
+    P --> R["CT: reiniciar la API<br/>y comprobar /model-info"]:::ok

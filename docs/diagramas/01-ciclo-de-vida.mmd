@@ -1,0 +1,55 @@
+flowchart TB
+    classDef data fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+    classDef train fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+    classDef reg fill:#fef3c7,stroke:#b45309,color:#78350f
+    classDef gate fill:#ffedd5,stroke:#c2410c,color:#7c2d12
+    classDef serve fill:#dcfce7,stroke:#15803d,color:#14532d
+    classDef mon fill:#fce7f3,stroke:#be185d,color:#831843
+    classDef ops fill:#f1f5f9,stroke:#475569,color:#0f172a
+
+    subgraph S1["① Datos"]
+        direction LR
+        ARC[("Archivo King County<br/>21.613 ventas 2014-2015")]:::data --> REL["release_sales.py<br/>publica un mes por vez"]:::data --> LIVE[("Dataset vivo<br/>volumen training-data")]:::data
+    end
+
+    subgraph S2["② Calidad de datos"]
+        direction LR
+        VAL{{"validate_data.py<br/>esquema · rangos · duplicados<br/>meses · mediana de precio"}}:::gate --> CLEAN["run_processing.py<br/>limpieza + esquema de la API"]:::data --> SPLIT["Split estable<br/>crc32(id) % 5 = test"]:::data
+    end
+
+    subgraph S3["③ Entrenamiento"]
+        direction LR
+        FE["train_model.py<br/>pipeline único: features<br/>+ vecinos + LightGBM"]:::train --> CV["CV 5 folds<br/>métricas cv_* + intervalo 90 %"]:::train --> TEST["Test<br/>MAE · R² · MAPE · cobertura"]:::train
+    end
+
+    subgraph S4["④ Registro"]
+        direction LR
+        VER[("MLflow · versión N<br/>Postgres + MinIO")]:::reg --> LIN["Linaje<br/>git_sha · dataset_sha256 · data_until"]:::reg --> CH(["@challenger"]):::reg
+    end
+
+    subgraph S5["⑤ Gobernanza"]
+        direction LR
+        QG{"promote_model.py<br/>puerta de calidad"}:::gate --> CVC{"Champion vs<br/>challenger<br/>margen 1 %"}:::gate --> CHAMP(["@champion"]):::reg
+    end
+
+    subgraph S6["⑥ Servicio"]
+        direction LR
+        API["API FastAPI<br/>carga @champion"]:::serve --> UI["Streamlit<br/>house.edqs.online"]:::serve
+        API --> LOG[("Registro de<br/>predicciones")]:::serve
+    end
+
+    subgraph S7["⑦ Monitoreo"]
+        direction LR
+        PSI["Drift de datos<br/>PSI sobre 500 casas"]:::mon --> PROM["Prometheus · Grafana<br/>Alertmanager"]:::mon
+        RE["Error real<br/>ventas que no vio"]:::mon --> PROM
+    end
+
+    subgraph S8["⑧ Operación"]
+        direction LR
+        JEN["Jenkins<br/>house-price-ct"]:::ops --> LOOP(["↻ cada mes de ventas nuevas<br/>vuelve a ① Datos"]):::ops
+        MAIL["Avisos<br/>por correo"]:::ops
+        BK[("Backups diarios<br/>+ prueba mensual")]:::ops
+        LOOP ~~~ MAIL ~~~ BK
+    end
+
+    S1 --> S2 --> S3 --> S4 --> S5 -->|"@champion nuevo<br/>o sigue el actual"| S6 --> S7 --> S8

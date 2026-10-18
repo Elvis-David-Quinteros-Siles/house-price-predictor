@@ -1,0 +1,34 @@
+flowchart TB
+    classDef step fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+    classDef store fill:#fef3c7,stroke:#b45309,color:#78350f
+    classDef ok fill:#dcfce7,stroke:#15803d,color:#14532d
+    classDef bad fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+    classDef dec fill:#fef3c7,stroke:#b45309,color:#78350f
+
+    subgraph D["Diario 03:30"]
+        D1["pg_dump -Fc<br/>de MLflow"]:::step --> D2{"pg_restore --list<br/>¿legible?"}:::dec
+        D2 -->|sí| D3["mc mirror del bucket<br/>acumulativo, nunca borra"]:::step
+        D3 --> D4["tar.gz de prediction-log<br/>y training-data"]:::step
+        D4 --> D5["Retención: 14 dumps<br/>y 14 tarballs"]:::step --> D6["last-success"]:::ok
+    end
+
+    BK[("~/backups/house-price<br/>db/ · artifacts/ · volumes/")]:::store
+
+    subgraph M["Mensual, día 1 · --check"]
+        M1["Postgres temporal<br/>pg_restore del último dump"]:::step --> M3{"¿Cada versión con MLmodel<br/>y el champion con serving/?"}:::dec
+        M3 -->|sí| M4["Restore check OK<br/>producción intacta"]:::ok
+    end
+
+    subgraph R["A mano · --yes"]
+        R1["pre-restore-*.dump<br/>de la base actual"]:::step --> R2["Parar MLflow<br/>drop · create · pg_restore"]:::step
+        R2 --> R3["Reponer artefactos<br/>que falten"]:::step --> R4["Verificar versiones"]:::step
+        R4 --> R5["MLflow arriba<br/>reiniciar la API"]:::ok
+    end
+
+    D3 --> BK
+    D4 --> BK
+    BK --> M1
+    BK --> R2
+    D2 -->|no| F["notify backup_failed"]:::bad
+    M3 -->|no| F
+    F --> MAIL(["correo a contacto@"]):::bad

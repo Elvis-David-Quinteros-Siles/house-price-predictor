@@ -1,0 +1,43 @@
+flowchart LR
+    classDef in fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+    classDef run fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+    classDef pg fill:#fef3c7,stroke:#b45309,color:#78350f
+    classDef s3 fill:#dcfce7,stroke:#15803d,color:#14532d
+    classDef use fill:#fce7f3,stroke:#be185d,color:#831843
+
+    GIT["Commit<br/>GIT_SHA"]:::in
+    DS["Dataset vivo<br/>sha256"]:::in
+    CFG["model_config.yaml<br/>hiperparámetros"]:::in
+
+    RUN(["Run final_training<br/>train_model.py"]):::run
+
+    subgraph PG["Postgres · metadatos"]
+        direction TB
+        P1["Parámetros y métricas<br/>mae · r2 · mape · cv_* · interval_coverage"]:::pg
+        P2["Versión N + descripción"]:::pg
+        P3["Tags: git_sha · dataset_sha256 · data_until<br/>versiones de librerías"]:::pg
+        P4["Tags posteriores: vs_champion<br/>promoted_at · real_error_AAAA-MM"]:::pg
+    end
+
+    subgraph S3["MinIO · artefactos"]
+        direction TB
+        A1["model/<br/>pipeline cloudpickle + engineer.py"]:::s3
+        A2["serving/<br/>model_metadata · sold_locations · reference_profile"]:::s3
+        A3["evaluation/<br/>holdout.csv"]:::s3
+    end
+
+    GIT --> RUN
+    DS --> RUN
+    CFG --> RUN
+    RUN --> P1
+    RUN --> P2
+    RUN --> P3
+    RUN --> A1
+    RUN --> A2
+    RUN --> A3
+
+    A1 --> U1["API: predice"]:::use
+    A2 --> U2["API: intervalo, ubicación, drift"]:::use
+    A3 --> U3["Champion vs challenger"]:::use
+    P3 --> U4["CT: ¿datos nuevos?<br/>error real: ¿qué ventas no vio?"]:::use
+    U3 --> P4

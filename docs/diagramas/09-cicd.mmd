@@ -1,0 +1,28 @@
+flowchart LR
+    classDef trig fill:#f1f5f9,stroke:#475569,color:#0f172a
+    classDef job fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+    classDef gate fill:#ffedd5,stroke:#c2410c,color:#7c2d12
+    classDef out fill:#dcfce7,stroke:#15803d,color:#14532d
+
+    T(["push o PR a main"]):::trig
+
+    subgraph J1["job tests"]
+        U["pytest tests/unit<br/>datos · features · drift · error real<br/>comparación · CT · avisos · validación"]:::job
+    end
+
+    subgraph J2["job build"]
+        direction LR
+        B1["Build imágenes<br/>mlflow · trainer · api"]:::job
+        B2["MLflow efímero"]:::job
+        B3["train.sh<br/>validación + entrenamiento"]:::job
+        B4{"Puerta de<br/>calidad"}:::gate
+        B5["API carga @champion<br/>del registro"]:::job
+        B6["pytest tests/api<br/>validación · ubicación · monotonía"]:::job
+        B7["Build Streamlit"]:::job
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7
+    end
+
+    P[("GHCR<br/>house-price-api · trainer<br/>mlflow · predictor")]:::out
+    T --> U --> B1
+    B7 -->|"solo en main"| P
+    B4 -->|"falla"| X["build rojo"]:::gate

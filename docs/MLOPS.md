@@ -30,7 +30,7 @@ test MAE $56.9k, R² 0.917, MAPE 10.9 %.
 17. [Problemas conocidos y lecciones](#17-problemas-conocidos-y-lecciones)
 18. [Lo que falta](#18-lo-que-falta)
 
-**Diagramas:**
+**Diagramas** (imágenes en `docs/diagramas/`, generadas desde sus fuentes Mermaid con `sh docs/diagramas/render.sh`):
 - [ciclo de vida completo](#1-visión-general)
 - [despliegue](#diagrama-de-despliegue)
 - [linaje de una versión](#linaje-de-una-versión)
@@ -46,63 +46,9 @@ test MAE $56.9k, R² 0.917, MAPE 10.9 %.
 
 ## 1. Visión general
 
-```mermaid
-flowchart TB
-    classDef data fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
-    classDef train fill:#ede9fe,stroke:#6d28d9,color:#3b0764
-    classDef reg fill:#fef3c7,stroke:#b45309,color:#78350f
-    classDef gate fill:#ffedd5,stroke:#c2410c,color:#7c2d12
-    classDef serve fill:#dcfce7,stroke:#15803d,color:#14532d
-    classDef mon fill:#fce7f3,stroke:#be185d,color:#831843
-    classDef ops fill:#f1f5f9,stroke:#475569,color:#0f172a
+![Ciclo de vida completo](diagramas/01-ciclo-de-vida.png)
 
-    subgraph S1["① Datos"]
-        direction LR
-        ARC[("Archivo King County<br/>21.613 ventas 2014-2015")]:::data --> REL["release_sales.py<br/>publica un mes por vez"]:::data --> LIVE[("Dataset vivo<br/>volumen training-data")]:::data
-    end
-
-    subgraph S2["② Calidad de datos"]
-        direction LR
-        VAL{{"validate_data.py<br/>esquema · rangos · duplicados<br/>meses · mediana de precio"}}:::gate --> CLEAN["run_processing.py<br/>limpieza + esquema de la API"]:::data --> SPLIT["Split estable<br/>crc32(id) % 5 = test"]:::data
-    end
-
-    subgraph S3["③ Entrenamiento"]
-        direction LR
-        FE["train_model.py<br/>pipeline único: features<br/>+ vecinos + LightGBM"]:::train --> CV["CV 5 folds<br/>métricas cv_* + intervalo 90 %"]:::train --> TEST["Test<br/>MAE · R² · MAPE · cobertura"]:::train
-    end
-
-    subgraph S4["④ Registro"]
-        direction LR
-        VER[("MLflow · versión N<br/>Postgres + MinIO")]:::reg --> LIN["Linaje<br/>git_sha · dataset_sha256 · data_until"]:::reg --> CH(["@challenger"]):::reg
-    end
-
-    subgraph S5["⑤ Gobernanza"]
-        direction LR
-        QG{"promote_model.py<br/>puerta de calidad"}:::gate --> CVC{"Champion vs<br/>challenger<br/>margen 1 %"}:::gate --> CHAMP(["@champion"]):::reg
-    end
-
-    subgraph S6["⑥ Servicio"]
-        direction LR
-        API["API FastAPI<br/>carga @champion"]:::serve --> UI["Streamlit<br/>house.edqs.online"]:::serve
-        API --> LOG[("Registro de<br/>predicciones")]:::serve
-    end
-
-    subgraph S7["⑦ Monitoreo"]
-        direction LR
-        PSI["Drift de datos<br/>PSI sobre 500 casas"]:::mon --> PROM["Prometheus · Grafana<br/>Alertmanager"]:::mon
-        RE["Error real<br/>ventas que no vio"]:::mon --> PROM
-    end
-
-    subgraph S8["⑧ Operación"]
-        direction LR
-        JEN["Jenkins<br/>house-price-ct"]:::ops --> LOOP(["↻ cada mes de ventas nuevas<br/>vuelve a ① Datos"]):::ops
-        MAIL["Avisos<br/>por correo"]:::ops
-        BK[("Backups diarios<br/>+ prueba mensual")]:::ops
-        LOOP ~~~ MAIL ~~~ BK
-    end
-
-    S1 --> S2 --> S3 --> S4 --> S5 -->|"@champion nuevo<br/>o sigue el actual"| S6 --> S7 --> S8
-```
+<sub>Fuente Mermaid: [`diagramas/01-ciclo-de-vida.mmd`](diagramas/01-ciclo-de-vida.mmd)</sub>
 
 El ciclo, en orden:
 
@@ -134,73 +80,9 @@ Todo corre en un VPS con Docker. El despliegue está en
 
 Contenedores, redes, volúmenes y servicios compartidos, con lo que viaja por cada conexión.
 
-```mermaid
-flowchart TB
-    classDef ext fill:#f8fafc,stroke:#64748b,stroke-dasharray:4 3,color:#0f172a
-    classDef app fill:#dcfce7,stroke:#15803d,color:#14532d
-    classDef ml fill:#fef3c7,stroke:#b45309,color:#78350f
-    classDef store fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
-    classDef obs fill:#fce7f3,stroke:#be185d,color:#831843
-    classDef ops fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+![Diagrama de despliegue](diagramas/02-despliegue.png)
 
-    USER(["Usuario"]):::ext
-    GH["GitHub<br/>repo + Actions"]:::ext
-    GHCR[("GHCR<br/>imágenes")]:::ext
-    GMAIL(["Gmail"]):::ext
-
-    subgraph VPS["VPS edqs.online · Docker"]
-        NGINX["nginx ~/web<br/>TLS · red proxy"]:::app
-
-        subgraph HP["house-price · docker compose"]
-            UI["house-price-predictor<br/>Streamlit :8501"]:::app
-            API["house-price-api<br/>FastAPI :8000"]:::app
-            MLF["house-price-mlflow<br/>MLflow 3.16 :5000"]:::ml
-            DB[("house-price-mlflow-db<br/>Postgres 16")]:::ml
-            TR["trainer · efímero<br/>docker compose run"]:::ml
-            V1[("prediction-log")]:::store
-            V2[("model-cache")]:::store
-            V3[("model-performance")]:::store
-            V4[("training-data")]:::store
-        end
-
-        subgraph SH["Servicios compartidos"]
-            MINIO[("MinIO ~/minio<br/>bucket house-price-mlflow")]:::store
-            subgraph CORE["~/infraestructura-core"]
-                PROM["Prometheus"]:::obs
-                AM["Alertmanager"]:::obs
-                GRAF["Grafana"]:::obs
-                LOKI["Loki + Alloy"]:::obs
-            end
-            JEN["Jenkins ~/jenkins"]:::ops
-            MS["Mailserver<br/>no-reply-house-price"]:::ops
-            CRON["cron del host<br/>~/backups/house-price"]:::ops
-        end
-    end
-
-    USER -->|HTTPS| NGINX -->|house.edqs.online| UI
-    UI -->|"POST /predict<br/>red internal"| API
-    API -->|"descarga @champion"| MLF
-    TR -->|"registra, promueve"| MLF
-    MLF -->|"metadatos · red mlflow-db"| DB
-    MLF -->|"artefactos S3 · red minio-net"| MINIO
-    API --- V1
-    API --- V2
-    API -. lee .- V3
-    TR -. escribe .- V3
-    TR --- V4
-    PROM -->|"scrape /metrics 15 s<br/>core-monitoring-net"| API
-    PROM --> AM -->|SMTP 587| MS
-    GRAF --> PROM
-    GRAF --> LOKI
-    LOKI -. logs de contenedores .- API
-    JEN -->|"docker.sock<br/>compose run"| TR
-    JEN -->|"¿alerta de drift?"| PROM
-    TR -->|"notify.py · SMTP 587"| MS
-    MS --> GMAIL
-    CRON -->|"pg_dump"| DB
-    CRON -->|"mc mirror"| MINIO
-    GH -->|"push a main"| GHCR
-```
+<sub>Fuente Mermaid: [`diagramas/02-despliegue.mmd`](diagramas/02-despliegue.mmd)</sub>
 
 ### Servicios (`docker-compose.yml`)
 
@@ -372,51 +254,9 @@ Lo que se guarda con cada versión:
 
 Qué entra en cada entrenamiento, dónde queda cada cosa (Postgres o MinIO) y quién la usa después.
 
-```mermaid
-flowchart LR
-    classDef in fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
-    classDef run fill:#ede9fe,stroke:#6d28d9,color:#3b0764
-    classDef pg fill:#fef3c7,stroke:#b45309,color:#78350f
-    classDef s3 fill:#dcfce7,stroke:#15803d,color:#14532d
-    classDef use fill:#fce7f3,stroke:#be185d,color:#831843
+![Linaje de una versión](diagramas/03-linaje-version.png)
 
-    GIT["Commit<br/>GIT_SHA"]:::in
-    DS["Dataset vivo<br/>sha256"]:::in
-    CFG["model_config.yaml<br/>hiperparámetros"]:::in
-
-    RUN(["Run final_training<br/>train_model.py"]):::run
-
-    subgraph PG["Postgres · metadatos"]
-        direction TB
-        P1["Parámetros y métricas<br/>mae · r2 · mape · cv_* · interval_coverage"]:::pg
-        P2["Versión N + descripción"]:::pg
-        P3["Tags: git_sha · dataset_sha256 · data_until<br/>versiones de librerías"]:::pg
-        P4["Tags posteriores: vs_champion<br/>promoted_at · real_error_AAAA-MM"]:::pg
-    end
-
-    subgraph S3["MinIO · artefactos"]
-        direction TB
-        A1["model/<br/>pipeline cloudpickle + engineer.py"]:::s3
-        A2["serving/<br/>model_metadata · sold_locations · reference_profile"]:::s3
-        A3["evaluation/<br/>holdout.csv"]:::s3
-    end
-
-    GIT --> RUN
-    DS --> RUN
-    CFG --> RUN
-    RUN --> P1
-    RUN --> P2
-    RUN --> P3
-    RUN --> A1
-    RUN --> A2
-    RUN --> A3
-
-    A1 --> U1["API: predice"]:::use
-    A2 --> U2["API: intervalo, ubicación, drift"]:::use
-    A3 --> U3["Champion vs challenger"]:::use
-    P3 --> U4["CT: ¿datos nuevos?<br/>error real: ¿qué ventas no vio?"]:::use
-    U3 --> P4
-```
+<sub>Fuente Mermaid: [`diagramas/03-linaje-version.mmd`](diagramas/03-linaje-version.mmd)</sub>
 
 Más tags que se agregan después: `vs_champion` (resultado de la
 comparación), `promoted_at` y `real_error_AAAA-MM` (error con ventas reales).
@@ -425,26 +265,9 @@ comparación), `promoted_at` y `real_error_AAAA-MM` (error con ventas reales).
 
 Una versión pasa por estos estados según lo que decidan la puerta de calidad, la comparación y el error real:
 
-```mermaid
-stateDiagram-v2
-    direction LR
-    [*] --> Registrada: train_model.py
-    Registrada --> Challenger: alias challenger
-    Challenger --> Descartada: no pasa la puerta de calidad
-    Challenger --> Descartada: pierde contra el champion
-    Challenger --> Champion: gana (promote_model.py)
-    state Champion {
-        direction LR
-        Sirviendo --> Evaluada: llega un mes de ventas
-        Evaluada --> Sirviendo: error real OK
-        Evaluada --> Degradada: MAPE o sesgo fuera de límite
-        Degradada --> Sirviendo: el challenger pierde (alerta activa)
-    }
-    Champion --> Retirada: un challenger gana
-    Retirada --> Champion: rollback --version N
-    Descartada --> [*]
-    Retirada --> [*]
-```
+![Estados de una versión](diagramas/04-estados-version.png)
+
+<sub>Fuente Mermaid: [`diagramas/04-estados-version.mmd`](diagramas/04-estados-version.mmd)</sub>
 
 ---
 
@@ -452,28 +275,9 @@ stateDiagram-v2
 
 `scripts/promote_model.py` decide si `@challenger` pasa a `@champion`:
 
-```mermaid
-flowchart TD
-    classDef ok fill:#dcfce7,stroke:#15803d,color:#14532d
-    classDef bad fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
-    classDef warn fill:#ffedd5,stroke:#c2410c,color:#7c2d12
-    classDef step fill:#f1f5f9,stroke:#475569,color:#0f172a
-    classDef dec fill:#fef3c7,stroke:#b45309,color:#78350f
+![Promoción](diagramas/05-promocion.png)
 
-    A(["promote_model.py<br/>candidato = @challenger"]):::step --> B
-    RB(["promote_model.py --version K<br/>rollback"]):::warn --> B
-    B{"Puerta de calidad<br/>sobre su propio test"}:::dec
-    B -->|"R² < 0.895 · MAE > $65k<br/>· MAPE > 12 %"| X["exit 1<br/>no se publica"]:::bad
-    B -->|pasa| C{"¿Rollback o<br/>registro vacío?"}:::dec
-    C -->|"sí: sin comparar"| P
-    C -->|"no: hay @champion vM"| D["Descargar holdout.csv<br/>del run del challenger"]:::step
-    D --> E["vM y vN predicen<br/>las mismas casas"]:::step
-    E --> F["Run 'vM vs vN' en MLflow<br/>tag vs_champion"]:::step
-    F --> G{"MAE(vN) ≤<br/>MAE(vM) × 1.01"}:::dec
-    G -->|no| L["exit 3<br/>sigue vM · vN queda @challenger"]:::warn
-    G -->|sí| P["@champion = candidato<br/>tag promoted_at"]:::ok
-    P --> R["CT: reiniciar la API<br/>y comprobar /model-info"]:::ok
-```
+<sub>Fuente Mermaid: [`diagramas/05-promocion.mmd`](diagramas/05-promocion.mmd)</sub>
 
 - **Puerta de calidad** (`quality_gate`): mínimos absolutos sobre las
   métricas de test del propio challenger.
@@ -623,86 +427,15 @@ que reconstruir la imagen del trainer).
 | `house-price-release-sales` | `release-sales.groovy` | A mano: publica el mes siguiente (parámetro `INIT_UNTIL` para reiniciar) y dispara el CT |
 | `house-price-ct` | `continuous-training.groovy` | Al terminar el anterior y un cron diario (`H 6 * * *`) |
 
-```mermaid
-flowchart TD
-    classDef step fill:#f1f5f9,stroke:#475569,color:#0f172a
-    classDef dec fill:#fef3c7,stroke:#b45309,color:#78350f
-    classDef ok fill:#dcfce7,stroke:#15803d,color:#14532d
-    classDef warn fill:#ffedd5,stroke:#c2410c,color:#7c2d12
-    classDef bad fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
+![Decisiones del CT](diagramas/06-ct-decisiones.png)
 
-    T(["release-sales terminó<br/>o cron diario 06:00"]):::step --> A
-    A{"¿Datos nuevos?<br/>sha256 del dataset ≠<br/>tag dataset_sha256"}:::dec
-    A -->|no| B{"¿DriftDeDatosDelModelo<br/>activa?"}:::dec
-    B -->|no| Z1["ÉXITO<br/>sin cambios"]:::ok
-    B -->|sí| Z2["INESTABLE + correo<br/>drift sin datos nuevos"]:::warn
-    A -->|sí| V{"validate_data.py<br/>¿contrato OK?"}:::dec
-    V -->|"exit 5"| Z7["FALLIDO + correo<br/>datos inválidos · sigue el champion"]:::bad
-    V -->|sí| C["Error real del champion<br/>con las ventas nuevas"]:::step
-    C -->|"exit 4 = degradado"| C2["se anota: champion degradado"]:::warn
-    C --> D["train.sh: entrenar → puerta<br/>→ champion vs challenger"]:::step
-    C2 --> D
-    D -->|"exit 3 y degradado"| Z3["INESTABLE + correo<br/>champion degradado, challenger perdió"]:::bad
-    D -->|"exit 3"| Z4["INESTABLE + correo<br/>challenger perdió"]:::warn
-    D -->|"otro error"| Z6["FALLIDO + correo"]:::bad
-    D -->|"exit 0"| E["Reiniciar la API<br/>esperar healthy"]:::step
-    E --> F{"¿/model-info sirve<br/>el nuevo @champion?"}:::dec
-    F -->|sí| Z5["ÉXITO + correo<br/>vN en producción"]:::ok
-    F -->|no| Z6
-```
+<sub>Fuente Mermaid: [`diagramas/06-ct-decisiones.mmd`](diagramas/06-ct-decisiones.mmd)</sub>
 
 Un build completo con datos nuevos, paso a paso:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Op as Operador
-    participant RS as Jenkins<br/>release-sales
-    participant CT as Jenkins<br/>house-price-ct
-    participant TR as Trainer
-    participant ML as MLflow
-    participant PR as Prometheus
-    participant API as API
-    participant SM as SMTP
+![Secuencia de un build del CT](diagramas/07-ct-secuencia.png)
 
-    Op->>RS: Build
-    RS->>TR: release_sales.py
-    TR-->>RS: ventas hasta 2015-04
-    RS-)CT: dispara (sin esperar)
-
-    CT->>TR: continuous_training.py new-data
-    TR->>ML: tag dataset_sha256 del champion
-    TR-->>CT: exit 0, hay datos nuevos
-    CT->>PR: ALERTS DriftDeDatosDelModelo
-    PR-->>CT: sin alerta
-
-    CT->>TR: validate_data.py
-    alt dataset inválido
-        TR-->>CT: exit 5 + problemas
-        CT->>SM: notify invalid_data
-        Note over CT: FALLIDO, sigue el champion
-    else dataset válido
-        TR-->>CT: exit 0
-        CT->>TR: production_performance.py
-        TR->>ML: carga el champion, registra el error real
-        TR->>TR: escribe real-error.json
-        PR->>API: scrape /metrics (house_price_real_*)
-        CT->>TR: train.sh
-        TR->>ML: registra vN como challenger
-        TR->>ML: puerta de calidad + vM vs vN
-        alt el challenger gana
-            TR->>ML: alias champion = vN
-            CT->>API: docker compose restart
-            API->>ML: descarga el nuevo champion
-            CT->>API: GET /model-info
-            API-->>CT: model_version = N
-            CT->>SM: notify promoted
-        else el challenger pierde
-            TR-->>CT: exit 3
-            CT->>SM: notify challenger_lost o degraded_lost
-        end
-    end
-```
+<sub>Fuente Mermaid: [`diagramas/07-ct-secuencia.mmd`](diagramas/07-ct-secuencia.mmd)</sub>
 
 Detalles:
 
@@ -783,42 +516,9 @@ Detalle completo en [`deployment/backup/README.md`](../deployment/backup/README.
 | Artefactos (bucket) | `mc mirror` acumulativo: nunca borra | todo |
 | `prediction-log`, `training-data` | `tar.gz` | 14 |
 
-```mermaid
-flowchart TB
-    classDef step fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
-    classDef store fill:#fef3c7,stroke:#b45309,color:#78350f
-    classDef ok fill:#dcfce7,stroke:#15803d,color:#14532d
-    classDef bad fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
-    classDef dec fill:#fef3c7,stroke:#b45309,color:#78350f
+![Backups y restauración](diagramas/08-backups.png)
 
-    subgraph D["Diario 03:30"]
-        D1["pg_dump -Fc<br/>de MLflow"]:::step --> D2{"pg_restore --list<br/>¿legible?"}:::dec
-        D2 -->|sí| D3["mc mirror del bucket<br/>acumulativo, nunca borra"]:::step
-        D3 --> D4["tar.gz de prediction-log<br/>y training-data"]:::step
-        D4 --> D5["Retención: 14 dumps<br/>y 14 tarballs"]:::step --> D6["last-success"]:::ok
-    end
-
-    BK[("~/backups/house-price<br/>db/ · artifacts/ · volumes/")]:::store
-
-    subgraph M["Mensual, día 1 · --check"]
-        M1["Postgres temporal<br/>pg_restore del último dump"]:::step --> M3{"¿Cada versión con MLmodel<br/>y el champion con serving/?"}:::dec
-        M3 -->|sí| M4["Restore check OK<br/>producción intacta"]:::ok
-    end
-
-    subgraph R["A mano · --yes"]
-        R1["pre-restore-*.dump<br/>de la base actual"]:::step --> R2["Parar MLflow<br/>drop · create · pg_restore"]:::step
-        R2 --> R3["Reponer artefactos<br/>que falten"]:::step --> R4["Verificar versiones"]:::step
-        R4 --> R5["MLflow arriba<br/>reiniciar la API"]:::ok
-    end
-
-    D3 --> BK
-    D4 --> BK
-    BK --> M1
-    BK --> R2
-    D2 -->|no| F["notify backup_failed"]:::bad
-    M3 -->|no| F
-    F --> MAIL(["correo a contacto@"]):::bad
-```
+<sub>Fuente Mermaid: [`diagramas/08-backups.mmd`](diagramas/08-backups.mmd)</sub>
 
 Destino: `~/backups/house-price/`. Primero la base y luego los artefactos:
 el espejo siempre contiene lo que referencia el dump más reciente.
@@ -848,36 +548,9 @@ servidor (ver [Lo que falta](#18-lo-que-falta)).
 
 `.github/workflows/ci.yml`, en cada push y PR a `main`:
 
-```mermaid
-flowchart LR
-    classDef trig fill:#f1f5f9,stroke:#475569,color:#0f172a
-    classDef job fill:#ede9fe,stroke:#6d28d9,color:#3b0764
-    classDef gate fill:#ffedd5,stroke:#c2410c,color:#7c2d12
-    classDef out fill:#dcfce7,stroke:#15803d,color:#14532d
+![CI/CD](diagramas/09-cicd.png)
 
-    T(["push o PR a main"]):::trig
-
-    subgraph J1["job tests"]
-        U["pytest tests/unit<br/>datos · features · drift · error real<br/>comparación · CT · avisos · validación"]:::job
-    end
-
-    subgraph J2["job build"]
-        direction LR
-        B1["Build imágenes<br/>mlflow · trainer · api"]:::job
-        B2["MLflow efímero"]:::job
-        B3["train.sh<br/>validación + entrenamiento"]:::job
-        B4{"Puerta de<br/>calidad"}:::gate
-        B5["API carga @champion<br/>del registro"]:::job
-        B6["pytest tests/api<br/>validación · ubicación · monotonía"]:::job
-        B7["Build Streamlit"]:::job
-        B1 --> B2 --> B3 --> B4 --> B5 --> B6 --> B7
-    end
-
-    P[("GHCR<br/>house-price-api · trainer<br/>mlflow · predictor")]:::out
-    T --> U --> B1
-    B7 -->|"solo en main"| P
-    B4 -->|"falla"| X["build rojo"]:::gate
-```
+<sub>Fuente Mermaid: [`diagramas/09-cicd.mmd`](diagramas/09-cicd.mmd)</sub>
 
 1. **Pruebas unitarias** (`tests/unit`): limpieza de datos, features, drift,
    error real, comparación de modelos, CT, avisos.
@@ -906,65 +579,9 @@ docker compose run --rm --no-deps -v $PWD/app:/src:ro -w /src trainer \
 
 De dónde sale cada métrica, qué alerta la vigila y a dónde llega:
 
-```mermaid
-flowchart LR
-    classDef src fill:#dcfce7,stroke:#15803d,color:#14532d
-    classDef calc fill:#ede9fe,stroke:#6d28d9,color:#3b0764
-    classDef met fill:#fef3c7,stroke:#b45309,color:#78350f
-    classDef alert fill:#fee2e2,stroke:#b91c1c,color:#7f1d1d
-    classDef view fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+![Observabilidad](diagramas/10-observabilidad.png)
 
-    subgraph API["API · cada predicción"]
-        direction TB
-        REQ["POST /predict"]:::src
-        JSONL[("predictions-AAAA-MM.jsonl")]:::src
-        WIN["Ventana: últimas 500"]:::calc
-        REF[("reference_profile.json<br/>deciles de entrenamiento")]:::calc
-        PSI["PSI por variable<br/>+ precio predicho"]:::calc
-        REQ --> JSONL --> WIN --> PSI
-        REF --> PSI
-    end
-
-    subgraph CTX["CT · cada mes de ventas"]
-        direction TB
-        NEW["Ventas posteriores<br/>a data_until"]:::src
-        EVAL["MAE · MAPE · sesgo<br/>cobertura del 90 %"]:::calc
-        RJ[("real-error.json")]:::calc
-        NEW --> EVAL --> RJ
-    end
-
-    subgraph MET["/metrics"]
-        direction TB
-        M1["http_requests_total<br/>http_request_duration_seconds"]:::met
-        M2["house_price_predictions_total<br/>house_price_predicted_price_dollars"]:::met
-        M3["house_price_model_info<br/>house_price_model_test_metric"]:::met
-        M4["house_price_feature_drift_psi<br/>house_price_drift_window_samples"]:::met
-        M5["house_price_real_*<br/>degraded · mape_limit"]:::met
-    end
-
-    PSI --> M4
-    RJ -->|"RealErrorCollector<br/>en cada scrape"| M5
-    REQ --> M1
-    REQ --> M2
-
-    PROM["Prometheus<br/>scrape 15 s"]:::view
-    MET --> PROM
-
-    R1{{"DriftDeDatosDelModelo<br/>PSI > 0.25 · ≥ 100 casas · 1 h"}}:::alert
-    R2{{"ErrorRealDelModeloAlto<br/>degradado y aún servido · 15 min"}}:::alert
-    R3{{"SistemaCaido"}}:::alert
-    PROM --> R1
-    PROM --> R2
-    PROM --> R3
-
-    AM["Alertmanager<br/>ruta sistema=house-price"]:::alert
-    R1 --> AM
-    R2 --> AM
-    R3 --> AM
-    AM -->|"correo · aviso y resuelta"| MAIL(["contacto@ → Gmail"]):::view
-    PROM --> GRAF["Grafana<br/>dashboard House Price Predictor"]:::view
-    PROM -->|"¿drift activo?"| JEN["Jenkins CT"]:::view
-```
+<sub>Fuente Mermaid: [`diagramas/10-observabilidad.mmd`](diagramas/10-observabilidad.mmd)</sub>
 
 ### Métricas propias (`/metrics` de la API)
 

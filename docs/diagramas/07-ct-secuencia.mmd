@@ -1,0 +1,48 @@
+sequenceDiagram
+    autonumber
+    actor Op as Operador
+    participant RS as Jenkins<br/>release-sales
+    participant CT as Jenkins<br/>house-price-ct
+    participant TR as Trainer
+    participant ML as MLflow
+    participant PR as Prometheus
+    participant API as API
+    participant SM as SMTP
+
+    Op->>RS: Build
+    RS->>TR: release_sales.py
+    TR-->>RS: ventas hasta 2015-04
+    RS-)CT: dispara (sin esperar)
+
+    CT->>TR: continuous_training.py new-data
+    TR->>ML: tag dataset_sha256 del champion
+    TR-->>CT: exit 0, hay datos nuevos
+    CT->>PR: ALERTS DriftDeDatosDelModelo
+    PR-->>CT: sin alerta
+
+    CT->>TR: validate_data.py
+    alt dataset inválido
+        TR-->>CT: exit 5 + problemas
+        CT->>SM: notify invalid_data
+        Note over CT: FALLIDO, sigue el champion
+    else dataset válido
+        TR-->>CT: exit 0
+        CT->>TR: production_performance.py
+        TR->>ML: carga el champion, registra el error real
+        TR->>TR: escribe real-error.json
+        PR->>API: scrape /metrics (house_price_real_*)
+        CT->>TR: train.sh
+        TR->>ML: registra vN como challenger
+        TR->>ML: puerta de calidad + vM vs vN
+        alt el challenger gana
+            TR->>ML: alias champion = vN
+            CT->>API: docker compose restart
+            API->>ML: descarga el nuevo champion
+            CT->>API: GET /model-info
+            API-->>CT: model_version = N
+            CT->>SM: notify promoted
+        else el challenger pierde
+            TR-->>CT: exit 3
+            CT->>SM: notify challenger_lost o degraded_lost
+        end
+    end

@@ -1,0 +1,65 @@
+flowchart TB
+    classDef ext fill:#f8fafc,stroke:#64748b,stroke-dasharray:4 3,color:#0f172a
+    classDef app fill:#dcfce7,stroke:#15803d,color:#14532d
+    classDef ml fill:#fef3c7,stroke:#b45309,color:#78350f
+    classDef store fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+    classDef obs fill:#fce7f3,stroke:#be185d,color:#831843
+    classDef ops fill:#ede9fe,stroke:#6d28d9,color:#3b0764
+
+    USER(["Usuario"]):::ext
+    GH["GitHub<br/>repo + Actions"]:::ext
+    GHCR[("GHCR<br/>imágenes")]:::ext
+    GMAIL(["Gmail"]):::ext
+
+    subgraph VPS["VPS edqs.online · Docker"]
+        NGINX["nginx ~/web<br/>TLS · red proxy"]:::app
+
+        subgraph HP["house-price · docker compose"]
+            UI["house-price-predictor<br/>Streamlit :8501"]:::app
+            API["house-price-api<br/>FastAPI :8000"]:::app
+            MLF["house-price-mlflow<br/>MLflow 3.16 :5000"]:::ml
+            DB[("house-price-mlflow-db<br/>Postgres 16")]:::ml
+            TR["trainer · efímero<br/>docker compose run"]:::ml
+            V1[("prediction-log")]:::store
+            V2[("model-cache")]:::store
+            V3[("model-performance")]:::store
+            V4[("training-data")]:::store
+        end
+
+        subgraph SH["Servicios compartidos"]
+            MINIO[("MinIO ~/minio<br/>bucket house-price-mlflow")]:::store
+            subgraph CORE["~/infraestructura-core"]
+                PROM["Prometheus"]:::obs
+                AM["Alertmanager"]:::obs
+                GRAF["Grafana"]:::obs
+                LOKI["Loki + Alloy"]:::obs
+            end
+            JEN["Jenkins ~/jenkins"]:::ops
+            MS["Mailserver<br/>no-reply-house-price"]:::ops
+            CRON["cron del host<br/>~/backups/house-price"]:::ops
+        end
+    end
+
+    USER -->|HTTPS| NGINX -->|house.edqs.online| UI
+    UI -->|"POST /predict<br/>red internal"| API
+    API -->|"descarga @champion"| MLF
+    TR -->|"registra, promueve"| MLF
+    MLF -->|"metadatos · red mlflow-db"| DB
+    MLF -->|"artefactos S3 · red minio-net"| MINIO
+    API --- V1
+    API --- V2
+    API -. lee .- V3
+    TR -. escribe .- V3
+    TR --- V4
+    PROM -->|"scrape /metrics 15 s<br/>core-monitoring-net"| API
+    PROM --> AM -->|SMTP 587| MS
+    GRAF --> PROM
+    GRAF --> LOKI
+    LOKI -. logs de contenedores .- API
+    JEN -->|"docker.sock<br/>compose run"| TR
+    JEN -->|"¿alerta de drift?"| PROM
+    TR -->|"notify.py · SMTP 587"| MS
+    MS --> GMAIL
+    CRON -->|"pg_dump"| DB
+    CRON -->|"mc mirror"| MINIO
+    GH -->|"push a main"| GHCR
