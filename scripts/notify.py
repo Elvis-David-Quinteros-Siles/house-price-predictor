@@ -5,8 +5,9 @@ Uso:
   python scripts/notify.py promoted --detail "v5 en producción" --build-url URL
   python scripts/notify.py failed --detail "Entrenamiento o puerta de calidad: exit 1"
 
-Eventos: promoted, challenger_lost, degraded_lost, drift_no_data, failed y
-test (comprueba la configuración SMTP).
+Eventos: promoted, challenger_lost, degraded_lost, drift_no_data, failed,
+backup_failed (deployment/backup/backup-registry.sh) y test (comprueba la
+configuración SMTP).
 El correo lleva el estado del registro (champion, challenger, error real) si
 MLflow responde; si no, sale igual, sin ese resumen.
 
@@ -47,6 +48,11 @@ EVENTS = {
     "failed": (
         "Falló el entrenamiento continuo",
         "El ciclo se cortó con un error: el champion no cambió. Ver el log del build.",
+    ),
+    "backup_failed": (
+        "Falló el backup del registro de modelos",
+        "El backup diario (deployment/backup/backup-registry.sh) no terminó: el último bueno es el de "
+        "~/backups/house-price/last-success. Ver ~/backups/house-price/backup.log.",
     ),
     "test": (
         "Prueba de avisos",
