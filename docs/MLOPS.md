@@ -42,12 +42,12 @@ flowchart LR
     subgraph Entrenamiento
         B --> C[run_processing.py<br/>limpieza]
         C --> D[train_model.py<br/>CV + test + registro]
-        D -->|@challenger| E[(MLflow<br/>Postgres + MinIO)]
+        D -->|"@challenger"| E[(MLflow<br/>Postgres + MinIO)]
     end
     subgraph Promoción
         E --> F{puerta de<br/>calidad}
         F -->|pasa| G{champion vs<br/>challenger}
-        G -->|gana| H[@champion]
+        G -->|gana| H["@champion"]
     end
     subgraph Producción
         H --> I[API FastAPI]
@@ -238,10 +238,10 @@ comparación), `promoted_at` y `real_error_AAAA-MM` (error con ventas reales).
 
 ```mermaid
 flowchart TD
-    A[@challenger vN] --> B{Puerta de calidad<br/>R² ≥ 0.895, MAE ≤ $65k, MAPE ≤ 12 %}
+    A["@challenger vN"] --> B{"Puerta de calidad<br/>R² ≥ 0.895, MAE ≤ $65k, MAPE ≤ 12 %"}
     B -->|no| X[exit 1: no se publica]
-    B -->|sí| C{¿Hay @champion?}
-    C -->|no| P[@champion = vN]
+    B -->|sí| C{"¿Hay @champion?"}
+    C -->|no| P["@champion = vN"]
     C -->|sí| D[Ambas versiones predicen<br/>el holdout del challenger]
     D --> E{MAE challenger ≤<br/>MAE champion × 1.01}
     E -->|sí| P
@@ -405,7 +405,7 @@ flowchart TD
     C --> D[Entrenar → puerta de calidad<br/>→ champion vs challenger]
     D -->|pierde y champion degradado| Z3[INESTABLE + correo<br/>champion degradado, challenger perdió]
     D -->|pierde| Z4[INESTABLE + correo<br/>challenger perdió]
-    D -->|gana| E[Reiniciar API → comprobar<br/>que sirve el nuevo @champion]
+    D -->|gana| E["Reiniciar API → comprobar<br/>que sirve el nuevo @champion"]
     E --> Z5[ÉXITO + correo<br/>vN en producción]
     D -->|error| Z6[FALLIDO + correo]
 ```
