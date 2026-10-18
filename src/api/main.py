@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from inference import predict_price, batch_predict, model_info, metadata, InvalidInputError
+from inference import predict_price, batch_predict, model_info, metadata, reference_profile, InvalidInputError
 import metrics
+from prediction_log import DriftMonitor
 from schemas import HousePredictionRequest, PredictionResponse
 from prometheus_fastapi_instrumentator import Instrumentator, metrics as http_metrics
 
@@ -42,6 +43,7 @@ instrumentator = Instrumentator().add(http_metrics.default(
 ))
 instrumentator.instrument(app).expose(app)
 metrics.publish_model_metadata(metadata)
+drift_monitor = DriftMonitor(reference_profile, metadata.get("model_version"))
 
 # Health check endpoint
 @app.get("/health", response_model=dict)
@@ -58,6 +60,7 @@ async def predict(request: HousePredictionRequest):
         metrics.record_rejection("predict", e.code)
         raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)})
     metrics.record("predict", [response.predicted_price])
+    drift_monitor.observe([request.model_dump()], [response.predicted_price])
     return response
 
 # Batch prediction endpoint
@@ -69,6 +72,7 @@ async def batch_predict_endpoint(requests: list[HousePredictionRequest]):
         metrics.record_rejection("batch", e.code)
         raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)})
     metrics.record("batch", prices)
+    drift_monitor.observe([r.model_dump() for r in requests], prices)
     return prices
 
 # Served model metadata: metrics, interval and valid input values

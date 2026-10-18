@@ -84,3 +84,12 @@ def test_batch_matches_single_predictions():
     houses = [HOUSE, {**HOUSE, "grade": 9}]
     batch = requests.post(f"{API_URL}/batch-predict", json=houses, timeout=10).json()
     assert batch == [price(), price(grade=9)]
+
+
+def test_metrics_expose_drift():
+    price()
+    body = requests.get(f"{API_URL}/metrics", timeout=5).text
+    samples = [line for line in body.splitlines() if line.startswith("house_price_drift_window_samples ")]
+    assert samples and float(samples[0].split()[1]) >= 1
+    assert 'house_price_feature_drift_psi{feature="sqft"}' in body
+    assert 'house_price_feature_drift_psi{feature="predicted_price"}' in body

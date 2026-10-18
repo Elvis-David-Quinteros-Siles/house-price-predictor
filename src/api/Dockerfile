@@ -50,8 +50,12 @@ ENV PYTHONPATH=/app \
 COPY src/api/ /app/
 # El pipeline del modelo referencia las clases de engineer.py.
 COPY src/features/engineer.py /app/
+# PSI frente al perfil de entrenamiento (prediction_log.py).
+COPY src/monitoring/drift.py /app/
 # Caché de la versión descargada (un volumen en el despliegue).
 RUN mkdir -p /app/models/cache && chown app /app/models/cache
+# Registro de predicciones (otro volumen).
+RUN mkdir -p /app/data/predictions && chown app /app/data/predictions
 
 USER app
 

@@ -26,7 +26,9 @@ import sklearn
 
 # El pipeline de variables vive en src/features/engineer.py (módulo `engineer`).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "features"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "monitoring"))
 from engineer import INPUT_FEATURES, build_pipeline  # noqa: E402
+from drift import build_profile  # noqa: E402
 
 ENGINEER_PATH = Path(__file__).resolve().parents[1] / "features" / "engineer.py"
 # Carpeta de artefactos del run con los ficheros que la API carga junto al modelo.
@@ -218,9 +220,17 @@ def main(args):
             json.dump(metadata, f, indent=2)
         logger.info(f"Saved model metadata to: {metadata_path}")
 
+        # Referencia para el drift: entradas de entrenamiento y sus predicciones
+        # fuera de muestra (las de producción también lo son).
+        profile_path = trained_dir / "reference_profile.json"
+        with open(profile_path, "w") as f:
+            json.dump(build_profile(X_train, y_oof), f)
+        logger.info(f"Saved drift reference profile to: {profile_path}")
+
         # Lo que la API necesita además del modelo, junto a la versión registrada.
         mlflow.log_artifact(str(metadata_path), SERVING_ARTIFACTS)
         mlflow.log_artifact(str(locations_path), SERVING_ARTIFACTS)
+        mlflow.log_artifact(str(profile_path), SERVING_ARTIFACTS)
 
         logger.info(f"CV   MAE: {cv_metrics['mae']:.2f}, R²: {cv_metrics['r2']:.4f}, MAPE: {cv_metrics['mape']:.2%}")
         logger.info(f"Test MAE: {mae:.2f}, R²: {r2:.4f}, MAPE: {mape:.2%}")

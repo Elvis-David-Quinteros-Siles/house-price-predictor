@@ -79,6 +79,12 @@ try:
     sold_locations = np.load(_files_dir / "sold_locations.npy")
 except Exception as e:
     raise RuntimeError(f"Error loading model or metadata: {str(e)}")
+# Perfil de los datos de entrenamiento para medir el drift; las versiones
+# registradas antes del monitoreo no lo tienen.
+_profile_path = _files_dir / "reference_profile.json"
+reference_profile = json.loads(_profile_path.read_text()) if _profile_path.exists() else None
+if reference_profile is None:
+    logger.warning("The served model has no reference_profile.json: drift is not measured")
 logger.info(f"Serving {metadata.get('model_name')} version {metadata.get('model_version')}")
 
 # El modelo es un TransformedTargetRegressor (log del precio) sobre el pipeline.

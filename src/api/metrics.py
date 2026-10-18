@@ -38,6 +38,19 @@ for _endpoint in ("predict", "batch"):
         PREDICTIONS.labels(endpoint=_endpoint, outcome=_outcome)
 
 
+FEATURE_DRIFT = Gauge(
+    "house_price_feature_drift_psi",
+    "PSI of each input (and of the predicted price) over the last predictions, "
+    "against the training data of the served model.",
+    ["feature"],
+)
+
+DRIFT_WINDOW_SAMPLES = Gauge(
+    "house_price_drift_window_samples",
+    "Predictions the drift PSI is computed over (the last DRIFT_WINDOW).",
+)
+
+
 def publish_model_metadata(metadata: dict) -> None:
     for name, value in metadata["metrics"].items():
         MODEL_TEST_METRIC.labels(metric=name).set(value)
@@ -53,3 +66,9 @@ def record(endpoint: str, prices: list[float]) -> None:
 
 def record_rejection(endpoint: str, code: str) -> None:
     PREDICTIONS.labels(endpoint=endpoint, outcome=code).inc()
+
+
+def publish_drift(samples: int, scores: dict) -> None:
+    DRIFT_WINDOW_SAMPLES.set(samples)
+    for feature, value in scores.items():
+        FEATURE_DRIFT.labels(feature=feature).set(value)

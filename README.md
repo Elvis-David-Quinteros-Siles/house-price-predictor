@@ -164,8 +164,9 @@ python src/models/train_model.py   --config configs/model_config.yaml   --data d
 
 Each version carries its lineage as tags: commit (`git_sha`), hash of the raw
 dataset (`dataset_sha256`) and library versions. Next to the model, the run
-stores what the API needs to serve it (`serving/model_metadata.json` and
-`serving/sold_locations.npy`).
+stores what the API needs to serve it (`serving/model_metadata.json`,
+`serving/sold_locations.npy` and `serving/reference_profile.json`, the
+training-data profile used to measure drift).
 
 ### 🚦 Step 3: Promote to production
 
@@ -186,6 +187,25 @@ registry is down, it serves the last version it downloaded. To serve a newly
 promoted version, restart the API. `GET /health`, `GET /model-info` and the
 `house_price_model_info` metric report the version being served. Without
 `MODEL_URI`, the API reads the files `train_model.py` leaves in `models/trained`.
+
+### 📉 Drift monitoring
+
+Every priced house (inputs, predicted price, model version, time) is appended
+to a monthly JSONL log in `PREDICTION_LOG_DIR` (`data/predictions`, a volume in
+production). Over the last `DRIFT_WINDOW` houses (default 500) the API computes
+the PSI (population stability index) of each input and of the predicted price
+against the training data of the served model (`src/monitoring/drift.py`, on
+training deciles) and exposes it in `/metrics` as
+`house_price_feature_drift_psi{feature}`, with the window size in
+`house_price_drift_window_samples`. The window is reloaded from the log at
+startup.
+
+PSI below 0.1 is stable, 0.1–0.25 a moderate shift and above 0.25 a large one.
+With few houses the PSI stays above zero even without drift (about
+(bins − 1) / n: 0.09 with 100 houses), so the `DriftDeDatosDelModelo` alert
+(PSI > 0.25 for 1 h) needs at least 100 houses in the window.
+
+Running `tests/api` against the production API writes its test houses to the log.
 
 ---
 
