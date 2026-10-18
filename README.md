@@ -5,6 +5,8 @@ Welcome to the **House Price Predictor** project! This is a real-world, end-to-e
 You'll start from raw data and move through data preprocessing, feature engineering, experimentation, model tracking with MLflow, and optionally using Jupyter for exploration – all while applying industry-grade tooling.
 
 
+> **Operación en producción (MLOps):** registro de modelos, champion vs challenger, drift, error real, entrenamiento continuo, avisos y backups, en [`docs/MLOPS.md`](docs/MLOPS.md).
+
 ## 📦 Project Structure
 
 ```
