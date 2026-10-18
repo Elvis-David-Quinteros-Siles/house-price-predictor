@@ -32,6 +32,26 @@ Resultados:
   falla con ventas reales y reentrenar no lo arregla; hay que revisarlo.
 - **Fallido:** error del ciclo o puerta de calidad no superada.
 
+## Avisos
+
+`house-price-ct` manda un correo (`scripts/notify.py`) en cada resultado que
+no sea "sin cambios": promoción, challenger perdido, champion degradado, drift
+sin datos y fallos del ciclo. Lleva el estado del registro (champion,
+challenger, último error real) y el enlace al build. Sale por el mailserver
+propio con `no-reply-house-price@edqs.online` hacia `contacto@edqs.online`;
+las variables `SMTP_*` y `NOTIFY_TO` están en el `.env` del despliegue. Si el
+envío falla, el build lo anota en el log y sigue.
+
+Las alertas de Prometheus del sistema (drift, error real, caída de la API)
+llegan por correo desde Alertmanager (`~/infraestructura-core`, receptor
+`house-price-correo`).
+
+Probar la configuración SMTP:
+
+```bash
+docker compose run --rm --no-deps trainer python scripts/notify.py test
+```
+
 ## Instalación
 
 Jenkins (`~/jenkins`) necesita el despliegue montado en la misma ruta que en el

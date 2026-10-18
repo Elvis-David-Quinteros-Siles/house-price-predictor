@@ -14,6 +14,9 @@
 //        │ gana                          │ pierde: INESTABLE, sigue el champion
 //        v
 //   reiniciar la API -> comprobar que sirve el nuevo @champion
+//
+// Avisa por correo (scripts/notify.py) de todo lo que no es "sin cambios":
+// promoción, challenger perdido, drift sin datos y fallos del ciclo.
 properties([
     disableConcurrentBuilds(),
     buildDiscarder(logRotator(numToKeepStr: '60')),
@@ -30,6 +33,18 @@ def compose(String args, boolean status = false) {
     sh(script: "cd /home/ubuntu/house-price-predictor && docker compose ${args}", returnStatus: status)
 }
 
+// Un aviso que no sale no tumba el ciclo: queda anotado en el log.
+def notify(String event, String detail) {
+    withEnv(["NOTIFY_DETAIL=${detail}"]) {
+        def rc = sh(script: 'cd /home/ubuntu/house-price-predictor && docker compose run --rm --no-deps -T '
+                            + "-e NOTIFY_DETAIL -e BUILD_URL trainer python scripts/notify.py ${event}",
+                    returnStatus: true)
+        if (rc != 0) {
+            echo "No se pudo enviar el aviso ${event} (exit ${rc})"
+        }
+    }
+}
+
 def check(String label, int rc) {
     if (rc != YES && rc != NO) {
         error("${label}: exit ${rc}")
@@ -38,6 +53,7 @@ def check(String label, int rc) {
 }
 
 timestamps {
+  try {
     def newData = false
     def drift = false
     def degraded = false
@@ -58,6 +74,7 @@ timestamps {
             unstable('Drift activo pero sin ventas nuevas con precio: reentrenar daría el mismo modelo. '
                      + 'Revisar qué casas se tasan (Grafana -> House Price Predictor).')
             currentBuild.description = 'drift sin datos nuevos'
+            notify('drift_no_data', currentBuild.description)
         } else {
             currentBuild.description = 'sin cambios'
         }
@@ -81,9 +98,11 @@ timestamps {
                 unstable('El champion está degradado con las ventas reales y el challenger no lo supera: '
                          + 'revisar el modelo (MLflow, Grafana -> House Price Predictor -> Error real).')
                 currentBuild.description = 'champion degradado, challenger perdió'
+                notify('degraded_lost', currentBuild.description)
             } else {
                 unstable('El challenger perdió contra el champion: sigue en producción la versión actual.')
                 currentBuild.description = 'challenger perdió'
+                notify('challenger_lost', currentBuild.description)
             }
             return
         }
@@ -114,5 +133,10 @@ timestamps {
             error("La API sirve la versión ${serving} y @champion es la ${expected}")
         }
         currentBuild.description = "v${serving} en producción" + (degraded ? ' (reemplaza a un champion degradado)' : '')
+        notify('promoted', currentBuild.description)
     }
+  } catch (e) {
+    notify('failed', e.getMessage() ?: e.toString())
+    throw e
+  }
 }
