@@ -75,3 +75,26 @@ production_performance:
   max_mape_increase: 0.15
   max_abs_bias: 0.05
   min_sales: 200
+
+# Contrato del dataset antes de entrenar (src/data/validate_data.py). Si no
+# se cumple, el ciclo para: un modelo entrenado con datos rotos puede pasar
+# la puerta de calidad, porque su test está igual de roto.
+# Rangos: los que acepta la API (src/api/schemas.py) y, para precio y
+# superficies, holgados sobre King County (precio $75k-$7.7M, sqft 290-13.540).
+# La mediana mensual del precio varió entre -9 % y +8 % en 2014-2015.
+data_validation:
+  ranges:
+    price: [50000, 20000000]
+    sqft_living: [200, 20000]
+    sqft_lot: [100, 5000000]
+    yr_built: [1900, 2015]
+    condition: [1, 5]
+    grade: [1, 13]
+    view: [0, 4]
+    waterfront: [0, 1]
+    lat: [47.1, 47.8]
+    long: [-122.6, -121.3]
+  # run_processing.py descarta 18 de 21.613 filas (0,08 %).
+  max_dropped_share: 0.01
+  min_month_sales: 300
+  max_median_price_shift: 0.25

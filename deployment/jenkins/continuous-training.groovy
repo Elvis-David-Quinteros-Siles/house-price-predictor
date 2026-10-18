@@ -8,6 +8,8 @@
 //   ¿Datos nuevos? ── no ──> ¿drift? ── sí ──> INESTABLE: sin precios reales nuevos
 //        │ sí                                  reentrenar daría el mismo modelo
 //        v
+//   validar el dataset ── inválido ──> FALLIDO: no se entrena, sigue el champion
+//        v
 //   error real del champion con las ventas nuevas (MLflow + /metrics)
 //        v
 //   entrenar -> puerta de calidad -> champion vs challenger
@@ -28,6 +30,7 @@ YES = 0
 NO = 10
 CHALLENGER_LOST = 3
 DEGRADED = 4  // scripts/production_performance.py
+INVALID_DATA = 5  // src/data/validate_data.py
 
 def compose(String args, boolean status = false) {
     sh(script: "cd /home/ubuntu/house-price-predictor && docker compose ${args}", returnStatus: status)
@@ -78,6 +81,28 @@ timestamps {
         } else {
             currentBuild.description = 'sin cambios'
         }
+        return
+    }
+
+    stage('Validar datos') {
+        // Antes del error real y del entrenamiento: los dos leen este dataset.
+        def out = sh(script: 'cd /home/ubuntu/house-price-predictor && docker compose run --rm -T trainer '
+                             + 'python src/data/validate_data.py --input data/live/kc_house_data.csv; echo "rc=$?"',
+                     returnStdout: true).trim()
+        echo out
+        def rc = Integer.parseInt(out.readLines().last() - 'rc=')
+        if (rc == INVALID_DATA) {
+            def problems = out.readLines().findAll { it.startsWith('INVALID') }.collect { it - 'INVALID  ' }
+            currentBuild.result = 'FAILURE'
+            currentBuild.description = 'datos inválidos'
+            notify('invalid_data', problems.join('; '))
+            return
+        }
+        if (rc != 0) {
+            error("validate_data: exit ${rc}")
+        }
+    }
+    if (currentBuild.description == 'datos inválidos') {
         return
     }
 

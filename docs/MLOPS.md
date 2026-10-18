@@ -161,11 +161,43 @@ La API no sale a internet: solo la ven Streamlit y Prometheus.
   dormitorios, 0 baños). Se mapea al esquema de la API (`sqft`, `lat`,
   `long`, `condition` como texto…) y se calcula `sale_month` (1 = enero
   2014).
+- **Validación** (`src/data/validate_data.py`), antes de todo lo demás: ver
+  [Validación del dataset](#validación-del-dataset).
 - **Split estable** (`is_test_house` en `train_model.py`): una casa es de
   test si `crc32(id) % 5 == 0` (≈20 %). Con un split aleatorio, al crecer el
   dataset las casas cambiarían de lado y una versión entrenaría con el test
   de otra; así ninguna versión ve jamás una casa de test y la comparación
   champion vs challenger es limpia.
+
+### Validación del dataset
+
+Un modelo entrenado con datos rotos puede pasar la puerta de calidad, porque
+su test está igual de roto. Por eso el ciclo comprueba el contrato del
+dataset crudo antes de medir el error real y de entrenar (bloque
+`data_validation` de `configs/model_config.yaml`):
+
+| Comprobación | Regla |
+|---|---|
+| Columnas | Las 14 que usan la limpieza, el modelo y la API |
+| Nulos y tipos | Ningún vacío ni valor no numérico en ellas |
+| Fecha | Formato `AAAAMMDDT000000` |
+| Rangos | Los que acepta la API (`schemas.py`); precio $50k–$20M, superficie 200–20.000 sqft |
+| Errores de captura | La limpieza no puede descartar más del 1 % de las filas (hoy 0,08 %) |
+| Duplicados | Ninguna venta repetida (misma casa y fecha): un mes publicado dos veces |
+| Meses | Seguidos, sin huecos, con al menos 300 ventas cada uno |
+| Precio | La mediana del último mes no se aparta más de ±25 % de la de los anteriores (en 2014-2015 varió entre −9 % y +8 %): un cambio de unidades salta aquí |
+
+Salida `5` si falla, con cada problema en la salida. `train.sh` la corre
+primero; el CT la tiene como etapa propia y, si falla, termina **fallido**
+sin tocar el champion y manda el aviso `invalid_data` con los problemas.
+
+Probado con el dataset vivo con los precios de marzo en miles de dólares y 50
+ventas repetidas: detecta los valores fuera de rango, las ventas duplicadas y
+la mediana del mes (−100 %).
+
+```bash
+python src/data/validate_data.py --input data/live/kc_house_data.csv
+```
 
 ### Simulación de datos nuevos
 
@@ -401,7 +433,9 @@ flowchart TD
     A[Datos nuevos?<br/>hash del dataset vs tag dataset_sha256] -->|no| B{Alerta de drift<br/>activa?}
     B -->|no| Z1[ÉXITO: sin cambios]
     B -->|sí| Z2[INESTABLE: drift sin datos nuevos<br/>+ correo]
-    A -->|sí| C[Error real del champion<br/>con las ventas nuevas]
+    A -->|sí| V{Validar el dataset}
+    V -->|inválido| Z7[FALLIDO + correo<br/>datos inválidos, sigue el champion]
+    V -->|válido| C[Error real del champion<br/>con las ventas nuevas]
     C --> D[Entrenar → puerta de calidad<br/>→ champion vs challenger]
     D -->|pierde y champion degradado| Z3[INESTABLE + correo<br/>champion degradado, challenger perdió]
     D -->|pierde| Z4[INESTABLE + correo<br/>challenger perdió]
@@ -419,7 +453,8 @@ Detalles:
   Alertmanager → Jenkins: Jenkins exige autenticación para disparar builds).
 - Códigos de salida que entiende el pipeline: `scripts/continuous_training.py`
   `0` sí / `10` no; `train.sh` `3` challenger perdió;
-  `production_performance.py` `4` degradado.
+  `production_performance.py` `4` degradado; `validate_data.py` `5` datos
+  inválidos.
 
 Resultados posibles del build:
 
@@ -430,6 +465,7 @@ Resultados posibles del build:
 | Inestable | `challenger perdió` | Sigue el champion |
 | Inestable | `champion degradado, challenger perdió` | Hay que intervenir |
 | Inestable | `drift sin datos nuevos` | Revisar el tráfico |
+| Fallido | `datos inválidos` | El dataset no cumple el contrato: no se entrenó |
 | Fallido | — | Error del ciclo o puerta de calidad |
 
 ---
@@ -449,6 +485,7 @@ a Gmail). Credenciales SMTP en el `.env` del despliegue (`SMTP_*`,
 | `challenger_lost` | El challenger perdió |
 | `degraded_lost` | Champion degradado y el challenger no lo supera |
 | `drift_no_data` | Drift sin ventas nuevas |
+| `invalid_data` | El dataset no pasó la validación (con la lista de problemas) |
 | `failed` | Cualquier excepción del pipeline |
 | `backup_failed` | Falló el backup o la prueba de restauración |
 | `test` | Prueba de la configuración SMTP |
@@ -657,6 +694,7 @@ tail ~/backups/house-price/backup.log
 |---|---|
 | Drift de datos | Grafana → Drift de datos: qué variable. Revisar el registro de predicciones (¿tráfico de tests? ¿otro tipo de casas?) |
 | Error real alto / champion degradado | Grafana → Error real y MLflow (runs `production_performance`, `vN vs vM`). Probar otro entrenamiento o rollback |
+| Datos inválidos | La lista de problemas del correo; revisar `release_sales.py` o el archivo. Reiniciar la simulación con `INIT_UNTIL` si hace falta |
 | Falló el CT | Log del build en Jenkins |
 | Falló el backup | `~/backups/house-price/backup.log`; correr el script a mano |
 
@@ -673,6 +711,10 @@ tail ~/backups/house-price/backup.log
 | | `neighbours` | 10 | Ventas vecinas por casa |
 | `quality_gate` | `min_r2` / `max_mae` / `max_mape` | 0.895 / 65 000 / 0.12 | Mínimos absolutos en test |
 | `champion_challenger` | `max_mae_increase` | 0.01 | Margen del challenger sobre el champion |
+| `data_validation` | `ranges` | por variable | Rangos válidos del dataset crudo |
+| | `max_dropped_share` | 0.01 | Filas que la limpieza puede descartar |
+| | `min_month_sales` | 300 | Ventas mínimas por mes |
+| | `max_median_price_shift` | 0.25 | Cambio máximo de la mediana del último mes |
 | `production_performance` | `max_mape_increase` | 0.15 | MAPE real sobre el de test |
 | | `max_abs_bias` | 0.05 | Sesgo máximo |
 | | `min_sales` | 200 | Ventas mínimas para declarar degradado |
@@ -747,11 +789,8 @@ Por prioridad:
 1. **Copia de los backups fuera del servidor** (rclone a otro almacenamiento
    después del backup diario).
 2. **Simulacro de restauración real** (`restore-registry.sh --yes`).
-3. **Validación de datos antes de entrenar:** esquema, rangos, nulos, meses
-   repetidos o desordenados; el CT debería parar antes de entrenar con datos
-   malos.
-4. **Separar el tráfico de tests** del registro de predicciones (cabecera que
+3. **Separar el tráfico de tests** del registro de predicciones (cabecera que
    la API no registre).
-5. **Recarga del modelo sin reiniciar y despliegue shadow/canary:** hoy cada
+4. **Recarga del modelo sin reiniciar y despliegue shadow/canary:** hoy cada
    promoción reinicia la API unos segundos.
-6. **Retención del registro de predicciones** (JSONL mensual sin límite).
+5. **Retención del registro de predicciones** (JSONL mensual sin límite).

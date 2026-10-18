@@ -33,7 +33,7 @@ house-price-predictor/
 │   └── notify.py               # Email notifications
 ├── src/
 │   ├── api/                    # FastAPI service (+ Dockerfile for the API and trainer images)
-│   ├── data/                   # Data cleaning
+│   ├── data/                   # Data validation and cleaning
 │   ├── features/               # Feature engineering pipeline
 │   ├── models/                 # Training and registration
 │   └── monitoring/             # Data drift (PSI) and real error
@@ -159,7 +159,18 @@ python -m jupyterlab
 
 ## 🔁 Model Workflow
 
-### 🧹 Step 1: Data Processing
+### 🧹 Step 1: Data validation and processing
+
+Check that the raw dataset meets the contract the cleaning, the model and the
+API rely on (`data_validation` in `configs/model_config.yaml`): columns, empty
+or non-numeric values, date format, the API's value ranges, the share of
+data-entry errors, repeated sales, consecutive months with enough sales, and
+the latest month's median price against the previous ones. It exits with
+code 5 if anything fails, and `scripts/train.sh` runs it first:
+
+```bash
+python src/data/validate_data.py --input data/raw/kc_house_data.csv
+```
 
 Clean and preprocess the raw housing dataset:
 
@@ -216,7 +227,7 @@ champion vs challenger stays a clean comparison.
 Two Jenkins jobs run the loop (`deployment/jenkins/`):
 
 - `house-price-release-sales` publishes the next month and triggers `house-price-ct`.
-- `house-price-ct` (also runs daily) retrains only if the live dataset differs from the one `@champion` was trained on (`dataset_sha256` tag). Before retraining it measures the champion's [real error](#-real-error-against-sale-prices) on the new sales. Then it runs the quality gate and champion vs challenger, restarts the API and checks that it serves the new `@champion`. If the drift alert is firing but there are no new labelled sales, it ends *unstable*: retraining on the same data would give the same model.
+- `house-price-ct` (also runs daily) retrains only if the live dataset differs from the one `@champion` was trained on (`dataset_sha256` tag) and passes the data validation (if it does not, the job fails without touching the champion). Before retraining it measures the champion's [real error](#-real-error-against-sale-prices) on the new sales. Then it runs the quality gate and champion vs challenger, restarts the API and checks that it serves the new `@champion`. If the drift alert is firing but there are no new labelled sales, it ends *unstable*: retraining on the same data would give the same model.
 
 Every outcome except "no changes" sends an [email](#-notifications).
 
@@ -295,6 +306,7 @@ and a link to the build. The events are:
 - the challenger lost
 - the champion is degraded and the challenger does not beat it
 - drift without new data
+- invalid data
 - a failed run
 - a failed backup
 

@@ -30,13 +30,15 @@ Resultados:
 - **Inestable, "challenger perdió":** sigue el champion; la comparación queda en MLflow.
 - **Inestable, "champion degradado, challenger perdió":** el modelo en producción ya
   falla con ventas reales y reentrenar no lo arregla; hay que revisarlo.
+- **Fallido, "datos inválidos":** el dataset vivo no pasó `src/data/validate_data.py`;
+  no se midió el error real ni se entrenó, sigue el champion.
 - **Fallido:** error del ciclo o puerta de calidad no superada.
 
 ## Avisos
 
 `house-price-ct` manda un correo (`scripts/notify.py`) en cada resultado que
 no sea "sin cambios": promoción, challenger perdido, champion degradado, drift
-sin datos y fallos del ciclo. Lleva el estado del registro (champion,
+sin datos, datos inválidos y fallos del ciclo. Lleva el estado del registro (champion,
 challenger, último error real) y el enlace al build. Sale por el mailserver
 propio con `no-reply-house-price@edqs.online` hacia `contacto@edqs.online`;
 las variables `SMTP_*` y `NOTIFY_TO` están en el `.env` del despliegue. Si el

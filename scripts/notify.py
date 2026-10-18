@@ -5,7 +5,7 @@ Uso:
   python scripts/notify.py promoted --detail "v5 en producción" --build-url URL
   python scripts/notify.py failed --detail "Entrenamiento o puerta de calidad: exit 1"
 
-Eventos: promoted, challenger_lost, degraded_lost, drift_no_data, failed,
+Eventos: promoted, challenger_lost, degraded_lost, drift_no_data, invalid_data, failed,
 backup_failed (deployment/backup/backup-registry.sh) y test (comprueba la
 configuración SMTP).
 El correo lleva el estado del registro (champion, challenger, error real) si
@@ -44,6 +44,12 @@ EVENTS = {
         "Drift sin ventas nuevas",
         "La alerta DriftDeDatosDelModelo está activa pero no hay ventas nuevas con precio: reentrenar daría "
         "el mismo modelo. Revisar qué casas se tasan (Grafana -> House Price Predictor -> Drift de datos).",
+    ),
+    "invalid_data": (
+        "Datos inválidos: no se entrenó",
+        "El dataset vivo no cumple el contrato (src/data/validate_data.py): el ciclo paró antes de medir "
+        "el error real y de entrenar, y sigue el champion. Corregir los datos (o reiniciar la simulación "
+        "con INIT_UNTIL) y volver a lanzar house-price-ct.",
     ),
     "failed": (
         "Falló el entrenamiento continuo",
