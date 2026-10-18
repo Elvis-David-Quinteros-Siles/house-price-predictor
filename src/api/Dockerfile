@@ -31,7 +31,8 @@ COPY configs/ configs/
 COPY data/raw/ data/raw/
 COPY src/ src/
 COPY scripts/ scripts/
-RUN mkdir -p data/processed models/trained && chown -R app data/processed models
+# data/live: dataset vivo del entrenamiento continuo (un volumen en el despliegue).
+RUN mkdir -p data/processed data/live models/trained && chown -R app data/processed data/live models
 
 # Commit del código, que queda como tag de cada versión del modelo.
 ARG GIT_SHA=unknown

@@ -6,11 +6,12 @@ import numpy as np
 import joblib
 import hashlib
 import os
+import zlib
 from datetime import datetime, timezone
 import mlflow
 import mlflow.sklearn
 from mlflow.models import infer_signature
-from sklearn.model_selection import KFold, cross_val_predict, train_test_split
+from sklearn.model_selection import KFold, cross_val_predict
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, r2_score
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.linear_model import LinearRegression
@@ -35,6 +36,23 @@ ENGINEER_PATH = Path(__file__).resolve().parents[1] / "features" / "engineer.py"
 SERVING_ARTIFACTS = "serving"
 # Commit del código entrenado; lo pasa el build (en la imagen no hay .git).
 GIT_SHA = os.getenv("GIT_SHA", "unknown")
+
+
+def is_test_house(house_id):
+    """Split estable: el 20 % de las casas, por hash de su id, es siempre test.
+
+    Con un split aleatorio, al crecer el dataset las casas cambiarían de lado y
+    el champion habría entrenado con parte del test del challenger. Así las
+    casas de test nunca las vio ninguna versión y champion vs challenger es
+    una comparación limpia.
+    """
+    return zlib.crc32(str(house_id).encode()) % 5 == 0
+
+
+def data_until(sale_month):
+    """Mes de la venta más reciente (sale_month: 1 = enero 2014) como AAAA-MM."""
+    year, month = divmod(int(sale_month) - 1, 12)
+    return f"{2014 + year}-{month + 1:02d}"
 
 
 def file_sha256(path):
@@ -95,11 +113,14 @@ def main(args):
     mlflow.set_experiment(model_cfg['name'])
 
     # Load data
-    data = pd.read_csv(args.data)
+    data = pd.read_csv(args.data, dtype={"id": str})
     target = model_cfg['target_variable']
     X = data[INPUT_FEATURES + ['sale_month']]
     y = data[target]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    in_test = data['id'].map(is_test_house)
+    X_train, X_test, y_train, y_test = X[~in_test], X[in_test], y[~in_test], y[in_test]
+    until = data_until(data['sale_month'].max())
+    logger.info(f"{len(data)} sales up to {until}: {len(X_train)} train, {len(X_test)} test")
 
     # Pipeline completo (variables + preprocesado + modelo), ajustado solo con train.
     # Las variables de vecinos esperan el precio en log.
@@ -146,7 +167,7 @@ def main(args):
         mlflow.log_metrics({'mae': mae, 'r2': r2, 'mape': mape, 'interval_coverage': coverage,
                             **{f'cv_{k}': v for k, v in cv_metrics.items()}})
         mlflow.set_tags({'algorithm': model_cfg['best_model'], 'git_sha': GIT_SHA,
-                         'dataset_sha256': file_sha256(args.raw_data)})
+                         'dataset_sha256': file_sha256(args.raw_data), 'data_until': until})
 
         # Modelo completo (variables + regresor) al registro. engineer.py viaja con
         # el modelo porque el pickle referencia sus clases. La firma son las
@@ -169,7 +190,8 @@ def main(args):
         client = MlflowClient()
         client.update_model_version(
             name=model_name, version=version,
-            description=(f"{model_cfg['best_model']} sobre log(precio), {len(X_train)} ventas de entrenamiento. "
+            description=(f"{model_cfg['best_model']} sobre log(precio), {len(X_train)} ventas de entrenamiento "
+                         f"hasta {until}. "
                          f"Test: MAE ${mae:,.0f}, R² {r2:.4f}, MAPE {mape:.2%}."),
         )
         deps = {
@@ -179,7 +201,8 @@ def main(args):
             "pandas_version": pd.__version__,
             "numpy_version": np.__version__,
         }
-        for k, v in {'git_sha': GIT_SHA, 'dataset_sha256': file_sha256(args.raw_data), **deps}.items():
+        for k, v in {'git_sha': GIT_SHA, 'dataset_sha256': file_sha256(args.raw_data), 'data_until': until,
+                     **deps}.items():
             client.set_model_version_tag(model_name, version, k, v)
         # Candidato a producción: scripts/promote_model.py lo pasa a champion si
         # cumple la puerta de calidad.
@@ -208,6 +231,7 @@ def main(args):
             "algorithm": model_cfg['best_model'],
             "log_target": bool(model_cfg.get('log_target', False)),
             "dataset": model_cfg.get('dataset', args.data),
+            "data_until": until,
             "train_rows": int(len(X_train)),
             "test_rows": int(len(X_test)),
             "metrics": {"mae": round(mae, 2), "r2": round(r2, 4), "mape": round(mape, 4)},

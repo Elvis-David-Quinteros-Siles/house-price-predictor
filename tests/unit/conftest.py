@@ -7,7 +7,8 @@ import pytest
 # Los scripts del pipeline no son un paquete: se importan desde sus carpetas.
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "src" / "data"), str(ROOT / "src" / "features"), str(ROOT / "src" / "monitoring"),
-                str(ROOT / "src" / "api"), str(ROOT / "scripts")]
+                str(ROOT / "src" / "api"), str(ROOT / "src" / "models"),
+                str(ROOT / "scripts")]
 
 
 @pytest.fixture

@@ -185,6 +185,20 @@ Each comparison is logged as a run `vN vs vM` in the model's experiment, and the
 `scripts/train.sh` chains the three steps; it is the trainer image's command
 (`docker build --target train -f src/api/Dockerfile .`).
 
+### 🔁 Continuous training
+
+The King County dataset is fixed (May 2014 - May 2015), so new sales are
+simulated: `scripts/release_sales.py` publishes the archive month by month into
+a live dataset, which the deployed trainer uses (`DATASET`). The train/test
+split is stable per house (hash of its `id`): as the dataset grows, test houses
+stay in test and no version ever trains on another version's test set, so
+champion vs challenger stays a clean comparison.
+
+Two Jenkins jobs run the loop (`deployment/jenkins/`):
+
+- `house-price-release-sales` publishes the next month and triggers `house-price-ct`.
+- `house-price-ct` (also runs daily) retrains only if the live dataset differs from the one `@champion` was trained on (`dataset_sha256` tag). Then it runs the quality gate and champion vs challenger, restarts the API and checks that it serves the new `@champion`. If the drift alert is firing but there are no new labelled sales, it ends *unstable*: retraining on the same data would give the same model.
+
 ### 🛰️ Serving
 
 The API downloads `MODEL_URI` (default `models:/house_price_model@champion`)

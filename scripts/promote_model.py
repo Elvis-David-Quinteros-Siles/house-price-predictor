@@ -25,6 +25,9 @@ from check_quality_gate import load_gate, passes  # noqa: E402
 from compare_models import challenger_wins, compare, load_rule  # noqa: E402
 
 CHAMPION, CHALLENGER = "champion", "challenger"
+# Código de salida cuando el challenger pierde: el ciclo funcionó, solo que el
+# modelo nuevo no es mejor (el job de Jenkins lo marca como inestable, no fallido).
+CHALLENGER_LOST = 3
 
 
 def parse_args():
@@ -82,8 +85,9 @@ def main(args):
     if not args.version and previous and previous != candidate.version:
         if not champion_vs_challenger(client, name, previous, candidate.version, args.config):
             if not args.skip_comparison:
-                sys.exit(f"Challenger lost: version {candidate.version} stays @{CHALLENGER}, "
-                         f"@{CHAMPION} remains version {previous}.")
+                print(f"Challenger lost: version {candidate.version} stays @{CHALLENGER}, "
+                      f"@{CHAMPION} remains version {previous}.", file=sys.stderr)
+                sys.exit(CHALLENGER_LOST)
             print("Challenger lost, promoting anyway (--skip-comparison).")
 
     client.set_registered_model_alias(name, CHAMPION, candidate.version)

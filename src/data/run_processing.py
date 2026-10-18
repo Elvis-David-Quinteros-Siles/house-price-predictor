@@ -23,6 +23,9 @@ def to_project_schema(df):
     """Map the King County columns to the fields the API and the UI use."""
     sale_date = pd.to_datetime(df["date"].str[:8], format="%Y%m%d")
     return pd.DataFrame({
+        # Identificador de la casa: decide su lado del split train/test
+        # (train_model.py), igual en todas las versiones del dataset.
+        "id": df["id"],
         "price": df["price"],
         "sqft": df["sqft_living"],
         "sqft_lot": df["sqft_lot"],
