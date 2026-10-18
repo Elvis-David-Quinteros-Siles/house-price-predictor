@@ -5,24 +5,41 @@ Welcome to the **House Price Predictor** project! This is a real-world, end-to-e
 You'll start from raw data and move through data preprocessing, feature engineering, experimentation, model tracking with MLflow, and optionally using Jupyter for exploration – all while applying industry-grade tooling.
 
 
-> **Operación en producción (MLOps):** registro de modelos, champion vs challenger, drift, error real, entrenamiento continuo, avisos y backups, en [`docs/MLOPS.md`](docs/MLOPS.md).
+The model runs in production with the full MLOps loop: a model registry, a quality gate, champion vs challenger, data drift and real-error monitoring, continuous training in Jenkins, email notifications and backups.
+
+> 📘 **How it all works in production (in Spanish):** [`docs/MLOPS.md`](docs/MLOPS.md), covering the architecture, every stage of the lifecycle, metrics and alerts, the runbook, thresholds and design decisions.
 
 ## 📦 Project Structure
 
 ```
 house-price-predictor/
-├── configs/                # YAML-based configuration for models
-├── data/                   # Raw and processed datasets
+├── configs/model_config.yaml   # Model, quality gate, champion vs challenger and real-error thresholds
+├── data/raw/                   # King County dataset
 ├── deployment/
-│   └── mlflow/             # MLflow tracking server image
-├── models/                 # Trained models and preprocessors
-├── notebooks/              # Optional Jupyter notebooks for experimentation
+│   ├── backup/                 # Registry backup and restore scripts (cron)
+│   ├── jenkins/                # Continuous training pipelines
+│   ├── kubernetes/             # Kubernetes manifests
+│   └── mlflow/                 # MLflow tracking server image
+├── docs/MLOPS.md               # Production MLOps, end to end
+├── notebooks/                  # Optional Jupyter notebooks for experimentation
+├── scripts/
+│   ├── train.sh                # Process -> train -> promote (trainer image command)
+│   ├── promote_model.py        # Quality gate + champion vs challenger -> @champion
+│   ├── compare_models.py       # Both versions on the same test set
+│   ├── check_quality_gate.py   # Absolute minimums on the test metrics
+│   ├── release_sales.py        # Simulated data source: one month of sales at a time
+│   ├── continuous_training.py  # Checks for the CT job: new data? drift? champion?
+│   ├── production_performance.py  # Real error of @champion on newly released sales
+│   └── notify.py               # Email notifications
 ├── src/
-│   ├── data/               # Data cleaning and preprocessing scripts
-│   ├── features/           # Feature engineering pipeline
-│   ├── models/             # Model training and evaluation
-├── requirements.txt        # Python dependencies
-└── README.md               # You’re here!
+│   ├── api/                    # FastAPI service (+ Dockerfile for the API and trainer images)
+│   ├── data/                   # Data cleaning
+│   ├── features/               # Feature engineering pipeline
+│   ├── models/                 # Training and registration
+│   └── monitoring/             # Data drift (PSI) and real error
+├── streamlit_app/              # Web interface (Spanish/English, map)
+├── tests/                      # Unit and API tests
+└── README.md                   # You’re here!
 ```
 
 ---
@@ -135,8 +152,8 @@ python -m jupyterlab
 
   The neighbour features are the mean log price, log price per sq ft, living area and distance of the 10 nearest sales in the training set (each house is left out of its own neighbours). The sale month captures the 2014–2015 price rise; predictions use the latest month. Hyperparameters were tuned with Optuna (44 trials), which only gained $0.1k over hand-set values. Asking for floors, basement and renovation year would bring the MAE to $58.6k, but the API does not take those inputs yet.
 - **One pipeline:** features, preprocessing and model are a single scikit-learn pipeline (`src/features/engineer.py`) fitted on the training split only and saved as one `.pkl`, so training and the API compute features with the same code.
-- **Served model:** trained with a fixed seed (`random_state: 42`), so every training run on the same data produces the same model. On the 20% hold-out test set it scores R² 0.91, MAE $61.5k and MAPE 11.1% (5-fold CV on the training split: R² 0.90, MAE $60.3k); these numbers are written to `models/trained/model_metadata.json` and exposed by `GET /model-info`.
-- **Price range:** an empirical 90% interval taken from the cross-validation (out-of-fold) predictions: 90% of those houses sold between 0.78× and 1.26× the predicted price, and the API applies those ratios to each prediction. On the untouched test set the interval holds 90.5% of the houses.
+- **Served model:** trained with a fixed seed (`random_state: 42`), so every training run on the same data produces the same model. Trained on the whole archive it scores R² 0.91, MAE $61.5k and MAPE 11.1% on the 20% hold-out test set. In production the model is retrained as simulated sales arrive (see [Continuous training](#-continuous-training)). The current `@champion` is v5, trained on sales up to March 2015: R² 0.917, MAE $56.9k, MAPE 10.9%. The metrics of the served version are in `serving/model_metadata.json` and exposed by `GET /model-info`.
+- **Price range:** an empirical 90% interval taken from the cross-validation (out-of-fold) predictions. For v5, 90% of those houses sold between 0.77× and 1.27× the predicted price, and the API applies those ratios to each prediction. On the untouched test set the interval holds 91.8% of the houses.
 - **Location check:** the API rejects points more than 0.5 km from any sale in the dataset (lakes, Puget Sound, outside the county); 99% of the sales have another one within 0.55 km.
 - **Interface:** Streamlit in Spanish and English (selector at the top, or `?lang=en` in the URL), with an OpenStreetMap map to place the house.
 
@@ -199,7 +216,9 @@ champion vs challenger stays a clean comparison.
 Two Jenkins jobs run the loop (`deployment/jenkins/`):
 
 - `house-price-release-sales` publishes the next month and triggers `house-price-ct`.
-- `house-price-ct` (also runs daily) retrains only if the live dataset differs from the one `@champion` was trained on (`dataset_sha256` tag). Then it runs the quality gate and champion vs challenger, restarts the API and checks that it serves the new `@champion`. If the drift alert is firing but there are no new labelled sales, it ends *unstable*: retraining on the same data would give the same model.
+- `house-price-ct` (also runs daily) retrains only if the live dataset differs from the one `@champion` was trained on (`dataset_sha256` tag). Before retraining it measures the champion's [real error](#-real-error-against-sale-prices) on the new sales. Then it runs the quality gate and champion vs challenger, restarts the API and checks that it serves the new `@champion`. If the drift alert is firing but there are no new labelled sales, it ends *unstable*: retraining on the same data would give the same model.
+
+Every outcome except "no changes" sends an [email](#-notifications).
 
 ### 🛰️ Serving
 
@@ -229,43 +248,117 @@ With few houses the PSI stays above zero even without drift (about
 
 Running `tests/api` against the production API writes its test houses to the log.
 
+### 🎯 Real error against sale prices
+
+Drift only says that the inputs changed. To know whether the model is
+*right*, it needs the real price, which arrives later. When a month of sales
+is released, and before retraining, `scripts/production_performance.py`
+makes `@champion` price those houses. All of them are after its
+`data_until` tag, so the model never saw them. It then compares the
+predictions with the sale prices (`src/monitoring/performance.py`): MAE,
+MAPE, **bias** (median of (predicted − sold) / sold, negative when the model
+prices below the market) and how many sales fall inside the 90% interval.
+
+The model counts as **degraded** if, over at least 200 sales, its real MAPE
+is more than 15% above its test MAPE or its bias is beyond ±5%
+(`production_performance` in `configs/model_config.yaml`). For calibration,
+v4 (sales up to February 2015, test MAPE 10.8%) was scored on the following
+months without being retrained:
+
+| Month | MAPE | Bias | In the 90% interval | Degraded |
+|---|---|---|---|---|
+| 2015-03 | 11.9% | −3.5% | 88.4% | no |
+| 2015-04 | 12.3% | −5.8% | 87.9% | yes (bias) |
+| 2015-05 | 13.3% | −6.6% | 83.0% | yes (MAPE and bias) |
+
+The growing negative bias is concept drift: prices keep rising and a frozen
+model falls behind. Monthly retraining corrects it.
+
+Each evaluation is logged to MLflow, both as a `production_performance` run
+and as a `real_error_YYYY-MM` tag on the version. The latest one also goes
+into `/metrics` as `house_price_real_*`: the API re-reads it on every scrape
+from a volume the trainer writes. The `ErrorRealDelModeloAlto` alert fires
+only while the degraded version is still the one being served.
+
+```bash
+python scripts/production_performance.py                     # live dataset ($DATASET)
+python scripts/production_performance.py --dataset data/raw/kc_house_data.csv --dry-run
+```
+
+### 📬 Notifications
+
+`scripts/notify.py` emails the outcome of the continuous training job, with
+the state of the registry (champion, challenger, comparison, last real error)
+and a link to the build. The events are:
+
+- a new model in production
+- the challenger lost
+- the champion is degraded and the challenger does not beat it
+- drift without new data
+- a failed run
+- a failed backup
+
+SMTP settings come from the environment (`SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, `NOTIFY_TO`). Without `SMTP_HOST` nothing is
+sent. A failed send never fails the job. In production, Alertmanager also
+emails the Prometheus alerts of the system (drift, real error, API down).
+
+```bash
+python scripts/notify.py test     # check the SMTP settings
+```
+
+### 💾 Backups
+
+`deployment/backup/backup-registry.sh` runs daily from the host's cron. It
+takes three copies:
+
+- a verified `pg_dump` of the MLflow database, keeping the last 14
+- a cumulative mirror of the artifacts bucket, which never deletes
+- tarballs of the prediction log and the live dataset
+
+`restore-registry.sh --check` restores the latest dump into a throwaway
+Postgres and checks that every model version has its files in the mirror. It
+runs monthly and does not touch production. `restore-registry.sh --yes`
+performs the real restore, saving the current database first. Failures send
+an email. See [`deployment/backup/README.md`](deployment/backup/README.md).
+
 ---
 
 
-## Building FastAPI and Streamlit 
+## 🖥️ Running the API and the interface
 
-The code for both the apps are available in `src/api` and `streamlit_app` already. To build and launch these apps 
+`docker-compose.yaml` runs the whole stack locally: MLflow, the trainer, the
+FastAPI service (`src/api`, port 8000) and the Streamlit interface
+(`streamlit_app`, port 8501). The API loads `@champion` from MLflow at
+startup, so train and promote a model first:
 
-  * Add a  `Dockerfile` in the root of the source code for building FastAPI  
-  * Add `streamlit_app/Dockerfile` to package and build the Streamlit app  
-  * Add `docker-compose.yaml` in the root path to launch both these apps. be sure to provide `API_URL=http://fastapi:8000` in the streamlit app's environment. 
-
-
-Once you have launched both the apps, you should be able to access streamlit web ui and make predictions. 
-
-You could also test predictions with FastAPI directly using 
-
+```bash
+docker compose up -d mlflow
+docker compose run --rm trainer      # train, register and promote to @champion
+docker compose up -d fastapi streamlit
 ```
+
+Open http://localhost:8501, or call the API directly:
+
+```bash
 curl -X POST "http://localhost:8000/predict" \
--H "Content-Type: application/json" \
--d '{
-  "sqft": 1500,
-  "bedrooms": 3,
-  "bathrooms": 2,
-  "location": "suburban",
-  "year_built": 2000,
-  "condition": fair
-}'
-
+  -H "Content-Type: application/json" \
+  -d '{
+    "sqft": 1800, "sqft_lot": 5000, "bedrooms": 3, "bathrooms": 2,
+    "year_built": 1975, "condition": "Average", "grade": 7,
+    "view": 0, "waterfront": false, "lat": 47.66, "long": -122.33
+  }'
 ```
 
-Be sure to replace `http://localhost:8000/predict` with actual endpoint based on where its running. 
-
+`GET /model-info` lists the served version, its metrics and the valid
+values of each input. `GET /metrics` exposes the Prometheus metrics. In
+production the API is only reachable by Streamlit and Prometheus, and the
+interface is published at https://house.edqs.online.
 
 ## ✅ Tests and CI
 
 ```bash
-# Unit tests of the data and feature pipeline
+# Unit tests: data, features, drift, real error, model comparison, continuous training, notifications
 pip install -r src/api/requirements.txt -r tests/requirements.txt
 python -m pytest tests/unit
 
