@@ -61,3 +61,17 @@ quality_gate:
 # (1 % ≈ $600): con datos más recientes, un empate dentro del ruido promueve.
 champion_challenger:
   max_mae_increase: 0.01
+
+# Error real (scripts/production_performance.py): al publicarse un mes de
+# ventas, el @champion tasa esas casas, que no vio, antes de reentrenar.
+# Está degradado si su MAPE supera el de su test en más de max_mape_increase
+# (relativo) o si tasa sistemáticamente por encima o por debajo del mercado
+# (|sesgo| > max_abs_bias), con al menos min_sales ventas: con menos, ruido.
+# v4 (ventas hasta 2015-02, MAPE de test 10.8 %) sin reentrenar:
+#   2015-03  MAPE 11.9 %  sesgo -3.5 %
+#   2015-04  MAPE 12.3 %  sesgo -5.8 %   <- degradado (sesgo)
+#   2015-05  MAPE 13.3 %  sesgo -6.6 %   <- degradado (MAPE y sesgo)
+production_performance:
+  max_mape_increase: 0.15
+  max_abs_bias: 0.05
+  min_sales: 200

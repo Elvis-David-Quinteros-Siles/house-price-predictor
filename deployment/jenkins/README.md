@@ -16,10 +16,20 @@ nuevos, reentrenar daría el mismo modelo. El drift se consulta a Prometheus en
 cada build (no hay webhook de Alertmanager: Jenkins exige autenticación para
 disparar builds y no hace falta exponer un token).
 
+Con ventas nuevas, antes de reentrenar, el `@champion` tasa las casas de los
+meses que no vio y se compara con el precio de venta
+(`scripts/production_performance.py`): es su error real en producción. Queda
+como run en MLflow (`stage = production_performance`), como tag
+`real_error_AAAA-MM` de la versión y en `/metrics` de la API, con la alerta
+`ErrorRealDelModeloAlto` si el champion que se sirve está degradado (MAPE por
+encima del de su test + 15 % o sesgo de más de ±5 %, en `configs/model_config.yaml`).
+
 Resultados:
 
 - **Éxito, "vN en producción":** el challenger ganó, la API se reinició y sirve la versión nueva.
 - **Inestable, "challenger perdió":** sigue el champion; la comparación queda en MLflow.
+- **Inestable, "champion degradado, challenger perdió":** el modelo en producción ya
+  falla con ventas reales y reentrenar no lo arregla; hay que revisarlo.
 - **Fallido:** error del ciclo o puerta de calidad no superada.
 
 ## Instalación

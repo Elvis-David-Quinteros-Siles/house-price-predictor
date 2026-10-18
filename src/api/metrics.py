@@ -2,7 +2,15 @@
 Métricas propias del modelo, junto a las HTTP de prometheus-fastapi-instrumentator.
 Se exponen en el mismo /metrics.
 """
-from prometheus_client import Counter, Gauge, Histogram
+import logging
+import os
+from pathlib import Path
+
+from performance import REAL_ERROR_FILE, read_real_error
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram
+from prometheus_client.core import GaugeMetricFamily
+
+logger = logging.getLogger(__name__)
 
 PREDICTIONS = Counter(
     "house_price_predictions_total",
@@ -72,3 +80,53 @@ def publish_drift(samples: int, scores: dict) -> None:
     DRIFT_WINDOW_SAMPLES.set(samples)
     for feature, value in scores.items():
         FEATURE_DRIFT.labels(feature=feature).set(value)
+
+
+# Error real del @champion con las últimas ventas publicadas: lo calcula
+# scripts/production_performance.py en el job de entrenamiento continuo y lo
+# deja en un volumen que la API monta. Se relee en cada scrape porque el job
+# lo escribe sin reiniciar la API (solo la reinicia si promueve otra versión).
+REAL_ERROR_PATH = Path(os.getenv("REAL_ERROR_DIR", "data/performance")) / REAL_ERROR_FILE
+
+REAL_ERROR_METRICS = (
+    # (nombre, clave en el JSON, descripción)
+    ("house_price_real_mae_dollars", "mae", "MAE against the sale prices of the last published month."),
+    ("house_price_real_mape", "mape", "MAPE against the sale prices of the last published month."),
+    ("house_price_real_bias", "bias",
+     "Median of (predicted - sold) / sold: negative when the model prices below the market."),
+    ("house_price_real_interval_coverage", "interval_coverage",
+     "Share of those sales inside the 90% interval the API returns."),
+    ("house_price_real_sales", "sales", "Sales the real error is computed over."),
+    ("house_price_real_mape_limit", "mape_limit", "Real MAPE above which the model counts as degraded."),
+    ("house_price_real_max_abs_bias", "max_abs_bias", "Absolute bias above which the model counts as degraded."),
+    ("house_price_real_degraded", "degraded", "1 if the evaluated model is degraded on those sales."),
+)
+
+
+class RealErrorCollector:
+    """Última evaluación con ventas reales, con la versión evaluada y el mes en las etiquetas."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def collect(self):
+        try:
+            evaluation = read_real_error(self.path)
+        except (OSError, ValueError) as e:
+            logger.warning(f"Could not read the real error ({self.path}): {e}")
+            return
+        if evaluation is None:
+            return
+        labels = ["model_version", "month"]
+        values = [str(evaluation["model_version"]), evaluation["month"]]
+        for name, key, documentation in REAL_ERROR_METRICS:
+            family = GaugeMetricFamily(name, documentation, labels=labels)
+            family.add_metric(values, float(evaluation[key]))
+            yield family
+
+    def describe(self):
+        # Sin describe() el registro llamaría a collect() al registrarlo.
+        return []
+
+
+REGISTRY.register(RealErrorCollector(REAL_ERROR_PATH))

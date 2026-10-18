@@ -8,6 +8,8 @@
 //   ¿Datos nuevos? ── no ──> ¿drift? ── sí ──> INESTABLE: sin precios reales nuevos
 //        │ sí                                  reentrenar daría el mismo modelo
 //        v
+//   error real del champion con las ventas nuevas (MLflow + /metrics)
+//        v
 //   entrenar -> puerta de calidad -> champion vs challenger
 //        │ gana                          │ pierde: INESTABLE, sigue el champion
 //        v
@@ -22,6 +24,7 @@ properties([
 YES = 0
 NO = 10
 CHALLENGER_LOST = 3
+DEGRADED = 4  // scripts/production_performance.py
 
 def compose(String args, boolean status = false) {
     sh(script: "cd /home/ubuntu/house-price-predictor && docker compose ${args}", returnStatus: status)
@@ -37,6 +40,7 @@ def check(String label, int rc) {
 timestamps {
     def newData = false
     def drift = false
+    def degraded = false
 
     stage('Datos nuevos') {
         newData = check('new-data', compose('run --rm trainer python scripts/continuous_training.py new-data', true))
@@ -60,18 +64,34 @@ timestamps {
         return
     }
 
+    stage('Error real') {
+        // El champion tasa las ventas que acaban de llegar, antes de que el
+        // reentrenamiento las aprenda: es su error en producción.
+        def rc = compose('run --rm trainer python scripts/production_performance.py', true)
+        if (rc != 0 && rc != DEGRADED) {
+            error("production_performance: exit ${rc}")
+        }
+        degraded = rc == DEGRADED
+    }
+
     stage('Entrenar y promover') {
         def rc = compose('run --rm trainer', true)
         if (rc == CHALLENGER_LOST) {
-            unstable('El challenger perdió contra el champion: sigue en producción la versión actual.')
-            currentBuild.description = 'challenger perdió'
+            if (degraded) {
+                unstable('El champion está degradado con las ventas reales y el challenger no lo supera: '
+                         + 'revisar el modelo (MLflow, Grafana -> House Price Predictor -> Error real).')
+                currentBuild.description = 'champion degradado, challenger perdió'
+            } else {
+                unstable('El challenger perdió contra el champion: sigue en producción la versión actual.')
+                currentBuild.description = 'challenger perdió'
+            }
             return
         }
         if (rc != 0) {
             error("Entrenamiento o puerta de calidad: exit ${rc}")
         }
     }
-    if (currentBuild.description == 'challenger perdió') {
+    if (currentBuild.description?.contains('challenger perdió')) {
         return
     }
 
@@ -93,6 +113,6 @@ timestamps {
         if (serving != expected) {
             error("La API sirve la versión ${serving} y @champion es la ${expected}")
         }
-        currentBuild.description = "v${serving} en producción"
+        currentBuild.description = "v${serving} en producción" + (degraded ? ' (reemplaza a un champion degradado)' : '')
     }
 }

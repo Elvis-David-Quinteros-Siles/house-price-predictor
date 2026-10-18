@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "features"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "monitoring"))
 from engineer import INPUT_FEATURES, build_pipeline  # noqa: E402
 from drift import build_profile  # noqa: E402
+from performance import month_label  # noqa: E402
 
 ENGINEER_PATH = Path(__file__).resolve().parents[1] / "features" / "engineer.py"
 # Carpeta de artefactos del run con los ficheros que la API carga junto al modelo.
@@ -51,8 +52,7 @@ def is_test_house(house_id):
 
 def data_until(sale_month):
     """Mes de la venta más reciente (sale_month: 1 = enero 2014) como AAAA-MM."""
-    year, month = divmod(int(sale_month) - 1, 12)
-    return f"{2014 + year}-{month + 1:02d}"
+    return month_label(sale_month)
 
 
 def file_sha256(path):

@@ -32,7 +32,9 @@ COPY data/raw/ data/raw/
 COPY src/ src/
 COPY scripts/ scripts/
 # data/live: dataset vivo del entrenamiento continuo (un volumen en el despliegue).
-RUN mkdir -p data/processed data/live models/trained && chown -R app data/processed data/live models
+# data/performance: error real del champion para la API (otro volumen).
+RUN mkdir -p data/processed data/live data/performance models/trained \
+ && chown -R app data/processed data/live data/performance models
 
 # Commit del código, que queda como tag de cada versión del modelo.
 ARG GIT_SHA=unknown
@@ -53,10 +55,14 @@ COPY src/api/ /app/
 COPY src/features/engineer.py /app/
 # PSI frente al perfil de entrenamiento (prediction_log.py).
 COPY src/monitoring/drift.py /app/
+# Error real con las ventas publicadas (metrics.py).
+COPY src/monitoring/performance.py /app/
 # Caché de la versión descargada (un volumen en el despliegue).
 RUN mkdir -p /app/models/cache && chown app /app/models/cache
 # Registro de predicciones (otro volumen).
 RUN mkdir -p /app/data/predictions && chown app /app/data/predictions
+# Error real que deja el entrenamiento continuo (volumen compartido con el entrenador).
+RUN mkdir -p /app/data/performance && chown app /app/data/performance
 
 USER app
 
