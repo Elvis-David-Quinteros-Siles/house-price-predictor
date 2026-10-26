@@ -1,0 +1,19 @@
+# Contenedor efímero de Vault Agent que genera los .env del proyecto.
+# Uso: ./vault/render.sh
+services:
+  vault-agent:
+    image: hashicorp/vault:${VAULT_IMAGE_TAG:-2.1.1}
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    entrypoint: ["vault", "agent", "-config=/vault/agent/agent.hcl"]
+    environment:
+      VAULT_ADDR: ${VAULT_ADDR_INTERNAL:-http://vault:8200}
+    volumes:
+      - ./:/vault/agent:ro
+      - ./approle:/vault/approle:ro
+      - ../:/workspace
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

@@ -1,0 +1,2 @@
+{{ with secret "secret/data/house-price-predictor/prod" }}{{ range $k, $v := .Data.data }}{{ $k }}={{ $v }}
+{{ end }}{{ end }}
