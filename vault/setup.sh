@@ -3,10 +3,10 @@
 # Uso: VAULT_TOKEN=<token-admin> ./vault/setup.sh
 source "$(dirname "$0")/lib.sh"
 
-vault_cli secrets list -format=json | grep -q '"secret/"' \
-  || vault_cli secrets enable -path=secret kv-v2
-vault_cli auth list -format=json | grep -q '"approle/"' \
-  || vault_cli auth enable approle
+mounts="$(vault_cli secrets list -format=json)"
+grep -q '"secret/"' <<<"$mounts" || vault_cli secrets enable -path=secret kv-v2
+auths="$(vault_cli auth list -format=json)"
+grep -q '"approle/"' <<<"$auths" || vault_cli auth enable approle
 
 vault_cli policy write "$PROJECT" /vault/agent/policy.hcl
 vault_cli write "auth/approle/role/$PROJECT" \

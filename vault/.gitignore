@@ -1,2 +1,4 @@
 # Credenciales AppRole: nunca se versionan
 approle/
+# Configuración propia de cada servidor
+local.env

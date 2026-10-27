@@ -4,7 +4,7 @@
 source "$(dirname "$0")/lib.sh"
 
 while read -r envfile kvpath; do
-  file="$ROOT_DIR/$envfile"
+  file="$RENDER_ROOT/$envfile"
   if [ ! -f "$file" ]; then echo "Omitido: $envfile no existe"; continue; fi
   python3 - "$file" <<'PY' | vault_cli kv put "secret/$kvpath" -
 import json, re, sys

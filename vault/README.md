@@ -26,6 +26,17 @@ unset VAULT_TOKEN
 docker compose up -d
 ```
 
+## Despliegue fuera del repo
+
+Si en el servidor los `.env` viven en otra carpeta (por ejemplo, la carpeta desde la que
+se ejecuta `docker compose`), indícala en `vault/local.env` (no se versiona):
+
+```bash
+echo 'VAULT_RENDER_ROOT=/ruta/al/despliegue' > vault/local.env
+```
+
+`seed.sh` y `render.sh` usarán esa carpeta en lugar de la raíz del repo.
+
 ## Rotar un secreto
 
 ```bash

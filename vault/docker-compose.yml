@@ -10,7 +10,7 @@ services:
     volumes:
       - ./:/vault/agent:ro
       - ./approle:/vault/approle:ro
-      - ../:/workspace
+      - ${VAULT_RENDER_ROOT:-../}:/workspace
     networks:
       - proxy
 

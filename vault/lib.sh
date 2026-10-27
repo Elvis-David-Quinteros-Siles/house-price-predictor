@@ -4,6 +4,10 @@ set -euo pipefail
 VAULT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$VAULT_DIR")"
 PROJECT="house-price-predictor"
+# vault/local.env (no versionado) permite ajustar variables por servidor, p. ej. VAULT_RENDER_ROOT
+[ -f "$VAULT_DIR/local.env" ] && source "$VAULT_DIR/local.env"
+# Carpeta donde viven los .env del despliegue (por defecto, la raíz del repo)
+RENDER_ROOT="${VAULT_RENDER_ROOT:-$ROOT_DIR}"
 VAULT_IMAGE="hashicorp/vault:${VAULT_IMAGE_TAG:-2.1.1}"
 VAULT_NETWORK="${VAULT_NETWORK:-proxy}"
 VAULT_ADDR_INTERNAL="${VAULT_ADDR_INTERNAL:-http://vault:8200}"
